@@ -293,6 +293,9 @@ button.row:hover{background:var(--green-soft)}
 }
 .sheet-head .sh-title{font-family:var(--display); font-weight:700; font-size:20px; flex:1}
 .sheet-body{overflow-y:auto; padding:20px; display:flex; flex-direction:column; gap:18px}
+/* Ohne dies quetscht die Flexspalte den Sucher zu einem Streifen zusammen,
+   sobald der Sheet-Inhalt hoeher wird als das Fenster. */
+.sheet-body > *{flex-shrink:0}
 .sheet-foot{padding:16px 20px calc(16px + env(safe-area-inset-bottom)); border-top:1px solid var(--line); background:var(--card); display:flex; gap:12px}
 .icon-btn{width:44px; height:44px; border-radius:50%; display:grid; place-items:center; border:1px solid var(--line-strong); background:var(--card); color:var(--ink-2)}
 .icon-btn:hover{background:var(--sunk)}
@@ -434,7 +437,10 @@ tr:last-child td{border-bottom:none}
   main{overflow:visible}
   body{background:#fff; color:#000}
   .printsheet{display:block}
-  body.printing-sheet main{display:none}
+  /* Beim Druck eines Bogens verschwindet alles andere – auch offene Sheets,
+     Dialoge und Hinweisblasen. Sonst verrutscht das Raster auf dem Papier. */
+  body.printing-sheet > *:not(#printHost){display:none !important}
+  #toast{display:none !important}
   @page{size:A4; margin:0}
   .druckseite{width:210mm; height:297mm; box-sizing:border-box; break-after:page; overflow:hidden}
   .druckseite:last-child{break-after:auto}
@@ -3576,13 +3582,28 @@ function toast(msg){
 }
 
 /* --------------------------------------------------------------- Druck */
+/* Der Druckmodus muss bestehen bleiben, solange der Druckdialog offen ist.
+   Auf dem iPad vergehen dabei leicht Minuten – eine feste Wartezeit reicht
+   nicht, sonst landet die ganze App auf dem Papier. */
+function druckModusBeenden(){
+  document.body.classList.remove('printing-sheet');
+  window.removeEventListener('afterprint', druckModusBeenden);
+  if (druckMedium && druckMedium.removeEventListener) druckMedium.removeEventListener('change', druckWechsel);
+}
+var druckMedium = window.matchMedia ? window.matchMedia('print') : null;
+function druckWechsel(e){ if (!e.matches) druckModusBeenden(); }
+
 function doPrint(html){
   $('#printHost').innerHTML = html;
   document.body.classList.add('printing-sheet');
+  window.addEventListener('afterprint', druckModusBeenden);
+  if (druckMedium && druckMedium.addEventListener) druckMedium.addEventListener('change', druckWechsel);
   let printed = false;
   try { window.print(); printed = true; } catch (e) { printed = false; }
   if (!printed) toast('Druck ist in dieser Ansicht gesperrt – Seite in einem eigenen Tab öffnen und dort drucken.');
-  setTimeout(() => document.body.classList.remove('printing-sheet'), 800);
+  /* Rückfallebenen, falls der Browser das Ende des Drucks nicht meldet */
+  setTimeout(() => document.addEventListener('pointerdown', druckModusBeenden, { once:true }), 1200);
+  setTimeout(druckModusBeenden, 300000);
 }
 function druckHinweis(){
   toast('Im Druckdialog „Tatsächliche Größe" bzw. 100 % wählen – nicht „An Seite anpassen".');
