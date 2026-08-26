@@ -370,6 +370,22 @@ button.row:hover{background:var(--green-soft)}
   background:var(--card); border:1px solid var(--line-strong); border-radius:var(--r-m);
   padding:15px; box-shadow:var(--shadow); display:flex; flex-direction:column;
 }
+.zeichen-gitter{display:grid; grid-template-columns:repeat(auto-fill,minmax(64px,1fr)); gap:10px}
+.zeichen-knopf{
+  aspect-ratio:1; border:1px solid var(--line-strong); border-radius:var(--r-m); background:var(--card);
+  font-size:30px; display:grid; place-items:center; line-height:1;
+}
+.zeichen-knopf:hover{border-color:var(--green); background:var(--green-soft)}
+.zeichen-knopf.gewaehlt{border-color:var(--green); background:var(--green-soft); box-shadow:inset 0 0 0 2px var(--green)}
+.zeichen-knopf.belegt{opacity:.35}
+.ausweis-vorschau .av-oben{display:flex; align-items:flex-start; gap:10px}
+.ausweis-vorschau .av-feld{
+  width:52px; height:52px; flex:none; border:1px dashed var(--line-strong); border-radius:8px;
+  display:grid; place-items:center; color:var(--ink-3); font-size:11px;
+}
+.ausweis-vorschau .av-zeichen{
+  width:52px; height:52px; flex:none; display:grid; place-items:center; font-size:32px; line-height:1;
+}
 .ausweis-vorschau .av-kopf{font-size:11.5px; color:var(--ink-2); line-height:1.3}
 .ausweis-vorschau .av-name{font-family:var(--display); font-weight:700; font-size:22px; line-height:1.05; margin-top:6px}
 .ausweis-vorschau .av-gruppe{font-size:13px; color:var(--ink-2); margin-top:2px}
@@ -470,6 +486,12 @@ tr:last-child td{border-bottom:none}
   .druckzelle.ausweis .az-kopf{font-size:7pt; color:#3a3a3a; line-height:1.2}
   .druckzelle.ausweis .az-name{font-family:var(--display); font-weight:700; line-height:1.05; color:#000; margin-top:1.5mm}
   .druckzelle.ausweis .az-gruppe{font-size:8.5pt; color:#333; margin-top:0.6mm}
+  .druckzelle.ausweis .az-oben{display:flex; align-items:flex-start; gap:3mm}
+  .druckzelle.ausweis .az-text{flex:1; min-width:0}
+  .druckzelle .az-feld{border:0.3pt dashed #999; border-radius:1.5mm; flex:none;
+    display:grid; place-items:center; color:#999; font-size:7pt}
+  .druckzelle .az-zeichen{flex:none; display:grid; place-items:center; line-height:1}
+  .druckzelle .dz-feld{flex:none}
   .druckzelle.ausweis .az-qr{margin:2.5mm auto 0}
   .druckzelle.ausweis .az-qr svg{width:100%; height:auto; display:block}
   .anl-seite{padding:14mm 13mm; background:#fff; color:#000}
@@ -1814,6 +1836,35 @@ function logAction(text){
 /* Rollen nach Pflichtenheft 7.2. Im Prototyp umgeschaltet statt angemeldet –
    im MVP entscheidet die Anmeldung darüber. */
 function istAdmin(){ return (S.rolle || 'admin') === 'admin'; }
+
+/* Was auf dem Bibliotheksausweis erscheint, entscheidet jede Einrichtung
+   selbst – die Bedarfe gehen weit auseinander, und jede Angabe mehr ist eine
+   Angabe, die auf einem Kärtchen die Kita verlassen kann. */
+var ZEICHEN = ['🍎','⭐','🐻','🌸','🚗','🐟','🦋','🌳','☀️','🐸','🍀','🎈','🐘','🚂','🌙','🐌','🦉','🍄','⛵','🐝'];
+function karteEinstellungen(){
+  if (!S.org.karte){
+    S.org.karte = {
+      vorname: true,
+      gruppe: S.org.showGroupOnCard !== false,   // alte Einstellung übernehmen
+      kita: true,
+      feld: 'keins'                              // keins | aufkleben | symbol
+    };
+  }
+  return S.org.karte;
+}
+/* Zeichen vergeben: möglichst im ganzen Haus eindeutig – die Karten liegen
+   meist in einer Kiste, nicht nach Gruppen getrennt. Reicht der Vorrat nicht,
+   wird wenigstens innerhalb der Gruppe kein Zeichen doppelt vergeben. */
+function zeichenFuer(k){
+  if (k.zeichen) return k.zeichen;
+  const imHaus = S.children.filter(x => x.id !== k.id && x.zeichen).map(x => x.zeichen);
+  const hausweitFrei = ZEICHEN.filter(z => imHaus.indexOf(z) < 0);
+  if (hausweitFrei.length){ k.zeichen = hausweitFrei[0]; return k.zeichen; }
+  const inGruppe = S.children.filter(x => x.groupId === k.groupId && x.id !== k.id && x.zeichen).map(x => x.zeichen);
+  const gruppeFrei = ZEICHEN.filter(z => inGruppe.indexOf(z) < 0);
+  k.zeichen = gruppeFrei.length ? gruppeFrei[0] : ZEICHEN[S.children.indexOf(k) % ZEICHEN.length];
+  return k.zeichen;
+}
 const byId = (arr, id) => arr.find(x => x.id === id);
 const title = id => byId(S.titles, id);
 const copy = id => byId(S.copies, id);
@@ -2601,8 +2652,17 @@ function screenChild(){
     '</div>'+
     '<div class="section"><span class="eyebrow">Bibliothekskarte</span>'+
       '<div class="kidcard"><div class="qr-frame kc-qr">'+qrSVG(k.token)+'</div>'+
-        '<div style="flex:1"><div class="kc-name">'+esc(k.name)+'</div>'+
-        (S.org.showGroupOnCard ? '<div class="kc-group">'+esc(groupName(k.groupId))+'</div>' : '')+
+        '<div style="flex:1">'+
+        (karteEinstellungen().feld === 'symbol'
+          ? '<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">'+
+            '<span style="font-size:38px;line-height:1">'+zeichenFuer(k)+'</span>'+
+            (istAdmin() ? '<button class="btn btn-sm" data-zeichen-aendern="'+k.id+'">Zeichen ändern</button>' : '')+
+            '</div>'
+          : karteEinstellungen().feld === 'aufkleben'
+          ? '<div class="hint" style="margin-bottom:8px">Auf der gedruckten Karte bleibt ein Feld zum Aufkleben frei.</div>'
+          : '')+
+        '<div class="kc-name">'+esc(k.name)+'</div>'+
+        (karteEinstellungen().gruppe ? '<div class="kc-group">'+esc(groupName(k.groupId))+'</div>' : '')+
         '<div class="kc-org">'+esc(S.org.name)+'</div>'+
         '<div class="token" style="margin-top:10px">'+esc(k.token)+'</div>'+
         '<div class="hint" style="margin-top:6px">Der Code enthält nur diesen Zufallswert – keinen Namen, keine Gruppe.</div>'+
@@ -2688,6 +2748,7 @@ function screenMore(){
 function backTo(name, label){ return '<button class="btn btn-ghost btn-sm" data-nav="'+name+'">'+icon('back')+esc(label)+'</button>'; }
 
 function screenSettings(){
+  const e = karteEinstellungen();
   return '<div class="stack">'+backTo('more','Mehr')+
     '<div><h1 class="screen-title">Einstellungen</h1><p class="screen-sub">Gelten für diese Einrichtung</p></div>'+
     '<div class="card pad stack">'+
@@ -2695,11 +2756,33 @@ function screenSettings(){
         '<div class="field"><label for="setName">Name der Einrichtung</label><input id="setName" data-set="name" value="'+esc(S.org.name)+'"></div>'+
         '<div class="field"><label for="setDays">Ausleihdauer in Tagen</label><input id="setDays" data-set="loanDays" type="number" min="1" max="90" value="'+S.org.loanDays+'"></div>'+
         '<div class="field"><label for="setMax">Bücher gleichzeitig je Kind</label><input id="setMax" data-set="maxBooks" type="number" min="1" max="20" value="'+S.org.maxBooks+'"></div>'+
-        '<div class="field"><label>Gruppe auf der Karte zeigen</label>'+
-          '<button class="toggle" data-act="toggle-groupcard" aria-pressed="'+(S.org.showGroupOnCard?'true':'false')+'" style="align-self:flex-start;min-height:46px">'+
-          (S.org.showGroupOnCard?'Ja – Vorname und Gruppe':'Nein – nur Vorname')+'</button></div>'+
-      '</div>'+
+        '</div>'+
       '<p class="hint">Änderungen an der Ausleihdauer gelten für neue Ausleihen. Laufende behalten ihr Rückgabedatum.</p>'+
+    '</div>'+
+
+    '<div class="section"><span class="eyebrow">Was auf dem Bibliotheksausweis steht</span>'+
+      '<div class="card pad stack" style="gap:16px">'+
+        '<p class="hint">Jede Einrichtung entscheidet selbst. Denk daran: Die Karte ist ein Gegenstand, '+
+        'der die Kita verlassen kann – jede Angabe darauf ist eine Angabe, die dann anderswo lesbar ist.</p>'+
+        '<div class="toggle-row">'+
+          '<button class="toggle" data-karte="vorname" aria-pressed="'+(e.vorname?'true':'false')+'">Vorname</button>'+
+          '<button class="toggle" data-karte="gruppe" aria-pressed="'+(e.gruppe?'true':'false')+'">Gruppe</button>'+
+          '<button class="toggle" data-karte="kita" aria-pressed="'+(e.kita?'true':'false')+'">Name der Kita</button>'+
+        '</div>'+
+        '<div class="field"><label>Feld zum Wiedererkennen</label>'+
+          '<div class="toggle-row">'+
+            '<button class="toggle" data-kartenfeld="keins" aria-pressed="'+(e.feld==='keins'?'true':'false')+'">Keines</button>'+
+            '<button class="toggle" data-kartenfeld="aufkleben" aria-pressed="'+(e.feld==='aufkleben'?'true':'false')+'">Leeres Feld zum Aufkleben</button>'+
+            '<button class="toggle" data-kartenfeld="symbol" aria-pressed="'+(e.feld==='symbol'?'true':'false')+'">Gedrucktes Zeichen</button>'+
+          '</div>'+
+          '<p class="hint">'+
+            (e.feld==='aufkleben'
+              ? 'Auf der Karte bleibt ein umrandetes Feld frei. Klebt euer vorhandenes Garderobenfoto hinein und laminiert danach – so kommt kein Kinderfoto in die Anwendung, und die Kinder erkennen das Bild wieder, das sie ohnehin kennen.'
+            : e.feld==='symbol'
+              ? 'KitaBib druckt je Kind ein Zeichen, das sich in der Gruppe nicht wiederholt. Änderbar auf der Seite des Kindes. Ein Zeichen verrät Fremden nichts über das Kind.'
+              : 'Ohne Feld. Für Kinder, die ihren Namen noch nicht lesen, ist ein Bild oder Zeichen allerdings der einzige Weg, die eigene Karte selbst zu finden.')+
+          '</p></div>'+
+      '</div>'+
     '</div>'+
   '</div>';
 }
@@ -2756,11 +2839,16 @@ function screenCards(){
     druckLeiste('karte')+
     '<span class="eyebrow">Vorschau · so kommt die Karte aus dem Drucker</span>'+
     '<div class="grid-books" style="grid-template-columns:repeat(auto-fill,minmax(180px,1fr))">'+
-      list.map(k => '<div class="ausweis-vorschau">'+
-        '<div class="av-kopf">Bibliotheksausweis · '+esc(S.org.name)+'</div>'+
-        '<div class="av-name">'+esc(k.name)+'</div>'+
-        (S.org.showGroupOnCard?'<div class="av-gruppe">'+esc(groupName(k.groupId))+'</div>':'')+
-        '<div class="av-qr">'+qrSVG(k.token)+'</div></div>').join('')+'</div>'+
+      list.map(k => { const e = karteEinstellungen(); return '<div class="ausweis-vorschau">'+
+        '<div class="av-oben"><div style="flex:1;min-width:0">'+
+        '<div class="av-kopf">Bibliotheksausweis'+(e.kita ? ' · '+esc(S.org.name) : '')+'</div>'+
+        (e.vorname ? '<div class="av-name">'+esc(k.name)+'</div>' : '')+
+        (e.gruppe?'<div class="av-gruppe">'+esc(groupName(k.groupId))+'</div>':'')+
+        '</div>'+
+        (e.feld==='aufkleben' ? '<div class="av-feld"><span>Foto</span></div>'
+         : e.feld==='symbol' ? '<div class="av-zeichen">'+zeichenFuer(k)+'</div>' : '')+
+        '</div>'+
+        '<div class="av-qr">'+qrSVG(k.token)+'</div></div>'; }).join('')+'</div>'+
   '</div>';
 }
 
@@ -3346,23 +3434,40 @@ function druckBogen(format, zellen, klasse){
   }).join('');
 }
 function karteZelle(k, format){
+  const e = karteEinstellungen();
   const stehend = format.hoehe > format.breite;
+  const gross = format.breite >= 100;
+  const zeichen = e.feld === 'symbol' ? zeichenFuer(k) : null;
+  const feldMm = stehend ? (gross ? 34 : 22) : 18;
+
+  const feldHtml = e.feld === 'aufkleben'
+      ? '<div class="az-feld" style="width:'+feldMm+'mm;height:'+feldMm+'mm"><span>Foto</span></div>'
+    : e.feld === 'symbol'
+      ? '<div class="az-zeichen" style="width:'+feldMm+'mm;height:'+feldMm+'mm;font-size:'+(feldMm*0.62)+'mm">'+zeichen+'</div>'
+      : '';
+
+  const textHtml =
+    (e.kita ? '<div class="az-kopf">Bibliotheksausweis · '+esc(S.org.name)+'</div>' : '<div class="az-kopf">Bibliotheksausweis</div>')+
+    (e.vorname ? '<div class="az-name" style="font-size:'+(gross?24:16)+'pt">'+esc(k.name)+'</div>' : '')+
+    (e.gruppe ? '<div class="az-gruppe">'+esc(groupName(k.groupId))+'</div>' : '');
+
   if (!stehend){
-    /* Liegende Karte: Code neben dem Namen – deutlich kleinerer Code */
     return '<div class="druckzelle'+(druckEinstellungen().rahmen?' mit-rahmen':'')+'">'+
       '<div class="dz-qr" style="width:34mm">'+qrSVG(k.token)+'</div>'+
-      '<div class="dz-text"><div class="dz-name" style="font-size:15pt">'+esc(k.name)+'</div>'+
-        (S.org.showGroupOnCard ? '<div class="dz-klein">'+esc(groupName(k.groupId))+'</div>' : '')+
-        '<div class="dz-org">'+esc(S.org.name)+'</div></div></div>';
+      '<div class="dz-text">'+
+        (e.vorname ? '<div class="dz-name" style="font-size:15pt">'+esc(k.name)+'</div>' : '')+
+        (e.gruppe ? '<div class="dz-klein">'+esc(groupName(k.groupId))+'</div>' : '')+
+        (e.kita ? '<div class="dz-org">'+esc(S.org.name)+'</div>' : '')+
+      '</div>'+ (feldHtml ? '<div class="dz-feld">'+feldHtml+'</div>' : '') +'</div>';
   }
-  /* Stehende Karte: der Code darf über die ganze Breite */
-  const gross = format.breite >= 100;
-  const kopfhoehe = gross ? 30 : 21;
+  /* Stehend: Kopfblock oben, darunter der Code über die volle Breite */
+  const kopfhoehe = Math.max(gross ? 30 : 21, feldHtml ? feldMm + 3 : 0);
   const qr = Math.min(format.breite - 9, format.hoehe - 9 - kopfhoehe);
   return '<div class="druckzelle ausweis'+(druckEinstellungen().rahmen?' mit-rahmen':'')+'">'+
-    '<div class="az-kopf">Bibliotheksausweis · '+esc(S.org.name)+'</div>'+
-    '<div class="az-name" style="font-size:'+(gross?24:16)+'pt">'+esc(k.name)+'</div>'+
-    (S.org.showGroupOnCard ? '<div class="az-gruppe">'+esc(groupName(k.groupId))+'</div>' : '')+
+    '<div class="az-oben">'+
+      '<div class="az-text">'+textHtml+'</div>'+
+      feldHtml+
+    '</div>'+
     '<div class="az-qr" style="width:'+qr.toFixed(1)+'mm">'+qrSVG(k.token)+'</div>'+
   '</div>';
 }
@@ -3383,7 +3488,7 @@ function etikettZelle(c, format){
    Drei Wege in den eigenen Bestand: ISBN-Liste (Daten kommen von der DNB),
    Tabelle fuer Buecher ohne ISBN, und eine vollstaendige Sicherung.
    ======================================================================== */
-var FASSUNG = '26.08.2026 · 4';
+var FASSUNG = '26.08.2026 · 5';
 var bestand = { isbnText:'', isbnLauf:null, isbnErgebnis:null, tabText:'', tabErgebnis:null, sicherung:null };
 
 function isbnListeLesen(text){
@@ -3828,7 +3933,7 @@ const ACTIONS = {
   'add-restart': () => { flow = { type:'add', step:'choose', draft:null, source:null, dupTitleId:null }; rerenderSheet(); },
   'toggle-avail': () => { lib.avail = !lib.avail; render(); },
   'clear-filters': () => { lib = { q:'', avail:false, age:'', cat:'', only:null }; render(); },
-  'toggle-groupcard': () => { S.org.showGroupOnCard = !S.org.showGroupOnCard; save(); render(); },
+
   'add-group': () => askText({ title:'Gruppe anlegen', label:'Name der Gruppe', ok:'Anlegen' }, name => {
     S.groups.push({ id:uid('g'), name });
     logAction('Gruppe "'+name+'" angelegt');
@@ -3926,7 +4031,8 @@ document.addEventListener('click', ev => {
     '[data-scan-child],[data-pick-child],[data-scan-copy],[data-unpick],[data-scan-return],[data-lookup],'+
     '[data-extend],[data-lost-card],[data-print-card],[data-toggle-active],[data-rename-group],'+
     '[data-label-copy],[data-add-copy],[data-draft-cat],[data-backdrop],[data-dlg-backdrop],'+
-    '[data-dlg-wahl],[data-copy-status],[data-anonymisieren],[data-rolle],[data-pick-copy],[data-pick-return]');
+    '[data-dlg-wahl],[data-copy-status],[data-anonymisieren],[data-rolle],[data-pick-copy],[data-pick-return],'+
+    '[data-karte],[data-kartenfeld],[data-zeichen-aendern],[data-zeichen-waehlen]');
   if (!el) return;
   const d = el.dataset;
 
@@ -3942,6 +4048,19 @@ document.addEventListener('click', ev => {
   }
   if (d.title){ go('book', d.title); return; }
   if (d.child){ go('child', d.child); return; }
+  if (d.karte){
+    const e = karteEinstellungen();
+    e[d.karte] = !e[d.karte];
+    save(); render();
+    return;
+  }
+  if (d.kartenfeld){
+    const e = karteEinstellungen();
+    e.feld = d.kartenfeld;
+    if (e.feld === 'symbol') S.children.forEach(k => { if (k.active) zeichenFuer(k); });
+    save(); render();
+    return;
+  }
   if (d.rolle){
     S.rolle = d.rolle; save();
     if (!istAdmin() && ['settings','groups','rollover','bestand','stats','log'].includes(route.name)) go('more');
@@ -4076,6 +4195,33 @@ document.addEventListener('click', ev => {
       save(); go('children');
       toast('Personendaten gelöscht – die Statistik bleibt ohne Personenbezug erhalten.');
     });
+    return;
+  }
+  if (d.zeichenAendern){
+    const k = child(d.zeichenAendern);
+    if (!k) return;
+    openSheet({
+      title: 'Zeichen für '+k.name,
+      body: () => {
+        const belegt = S.children.filter(x => x.id !== k.id && x.zeichen).map(x => x.zeichen);
+        return '<p class="hint">Ein Zeichen, das das Kind wiedererkennt. Bereits vergebene sind ausgegraut – die Karten liegen meist zusammen in einer Kiste.</p>'+
+          '<div class="zeichen-gitter">'+ZEICHEN.map(z =>
+            '<button class="zeichen-knopf'+(z===k.zeichen?' gewaehlt':'')+(belegt.indexOf(z)>=0?' belegt':'')+'" '+
+            'data-zeichen-waehlen="'+z+'" data-zeichen-kind="'+k.id+'">'+z+'</button>').join('')+'</div>';
+      },
+      foot: () => '<button class="btn btn-block" data-act="close-sheet">Schließen</button>'
+    });
+    return;
+  }
+  if (d.zeichenWaehlen){
+    const k = child(d.zeichenKind);
+    if (k){
+      k.zeichen = d.zeichenWaehlen;
+      logAction('Zeichen für '+k.name+' geändert');
+      save();
+      closeSheet();
+      toast('Zeichen übernommen – Karte neu drucken nicht vergessen.');
+    }
     return;
   }
   if (d.labelCopy){
