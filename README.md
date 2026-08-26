@@ -40,3 +40,16 @@ Prototyp zur Erprobung im Alltag – noch ohne Anmeldung, ohne Mandantentrennung
 und ohne gemeinsamen Datenbestand über mehrere Geräte. Grundlage ist das
 Gesamtkonzept V1.0 (Lastenheft, Pflichtenheft, Datenschutz, QR-System, UX/UI,
 Jahreswechsel, MVP).
+
+## Aktualisieren
+
+Die Arbeitsdatei ist `KitaBib_Prototyp.html` (nicht im Repository). Nach einer
+Änderung:
+
+```bash
+cp KitaBib_Prototyp.html index.html
+git commit -am "Beschreibung der Änderung"
+git push
+```
+
+GitHub Pages baut die Seite danach in etwa einer Minute neu.
