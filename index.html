@@ -1776,7 +1776,7 @@ function buildSeed(){
     });
     for (let c=0;c<SEED_COPIES[i];c++){
       copies.push({ id:'c'+id+'_'+(c+1), titleId:id, inv:'B-'+String(i+1).padStart(3,'0')+'-'+(c+1),
-        status:'available', token:newToken('B') });
+        status:'available', token:newToken('B'), etikettAm: addDays(todayISO(), -30) });
     }
   });
   const t = todayISO();
@@ -2420,14 +2420,27 @@ function addBody(){
   }
   if (flow.step === 'done'){
     const t = title(flow.newTitleId), c = copy(flow.newCopyId);
+    const format = formatFinden(ETIKETT_FORMATE, druckEinstellungen().etikett);
+    const proBogen = format.spalten * format.zeilen;
+    const warten = ohneEtikett().length;
     return '<div class="success"><span class="s-mark">'+icon('check')+'</span>'+
       '<span class="s-title">Exemplar angelegt</span>'+
       '<span class="s-body">'+esc(t.title)+' · '+esc(c.inv)+'</span></div>'+
       '<div class="card pad" style="display:flex;gap:16px;align-items:center">'+
         '<div class="qr-frame" style="width:132px;flex:none">'+qrSVG(c.token)+'</div>'+
         '<div style="flex:1"><div style="font-weight:700">QR-Etikett</div>'+
-        '<div class="r-sub">Aufkleben, fertig. Der Code enthält nur die Exemplar-Kennung '+esc(c.inv)+'.</div>'+
-        '<div class="token" style="margin-top:8px">'+esc(c.token)+'</div></div></div>';
+        '<div class="r-sub">Der Code enthält nur die Exemplar-Kennung '+esc(c.inv)+'.</div>'+
+        '<div class="token" style="margin-top:8px">'+esc(c.token)+'</div></div></div>'+
+      '<div class="section"><span class="eyebrow">Etikett drucken</span>'+
+        '<button class="sub-btn" data-act="etikett-jetzt" style="min-height:74px">'+icon('printer')+
+          '<span><span style="font-size:17px">Jetzt dieses eine drucken</span>'+
+          '<span class="sb-hint">Braucht einen ganzen Bogen für ein Etikett</span></span></button>'+
+        '<button class="sub-btn" data-act="etikett-spaeter" style="min-height:74px">'+icon('label')+
+          '<span><span style="font-size:17px">Sammeln und später drucken</span>'+
+          '<span class="sb-hint">'+plural(warten,'Etikett wartet','Etiketten warten')+
+          ' · ein Bogen fasst '+proBogen+'</span></span></button>'+
+        '<p class="hint">Beim Sammeln erinnert der Startbildschirm daran, und der Bogen wird voll ausgenutzt.</p>'+
+      '</div>';
   }
 }
 function field(label, key, val, type){
@@ -2463,6 +2476,12 @@ function screenStart(){
     act:'<button class="btn btn-sm" data-go="overdue">Ansehen</button>' });
   if (damaged.length) notices.push({ cls:'todo', ic:'alert', t:plural(damaged.length,'Exemplar','Exemplare')+' zur Prüfung',
     b:'Nach der Rückgabe als beschädigt gemeldet', act:'<button class="btn btn-sm" data-go="damaged">Ansehen</button>' });
+  const fehltEtikett = ohneEtikett();
+  if (fehltEtikett.length) notices.push({ cls:'todo', ic:'label',
+    t: plural(fehltEtikett.length,'Exemplar','Exemplare')+' ohne Etikett',
+    b: fehltEtikett.slice(0,3).map(c => title(c.titleId).title+' ('+c.inv+')').join(' · ')+
+       (fehltEtikett.length>3 ? ' …' : ''),
+    act:'<button class="btn btn-sm" data-go="labels">'+icon('printer')+'Etiketten drucken</button>' });
   if (noCard.length) notices.push({ cls:'todo', ic:'card', t:plural(noCard.length,'Kind','Kinder')+' ohne Bibliothekskarte',
     b: noCard.map(k=>k.name).join(', '), act:'<button class="btn btn-sm" data-go="cards">Karten erzeugen</button>' });
   if (dueToday.length) notices.push({ cls:'calm', ic:'clock', t:plural(dueToday.length,'Buch ist','Bücher sind')+' heute fällig',
@@ -2852,25 +2871,41 @@ function screenCards(){
   '</div>';
 }
 
+let etikettFilter = 'neu';
 function screenLabels(){
-  const list = S.copies.slice();
+  const fehlt = ohneEtikett();
+  if (etikettFilter === 'neu' && !fehlt.length) etikettFilter = 'alle';
+  const list = etikettFilter === 'neu' ? fehlt : S.copies.slice();
   const format = formatFinden(ETIKETT_FORMATE, druckEinstellungen().etikett);
   const proSeite = format.spalten * format.zeilen;
   return '<div class="stack">'+backTo('more','Mehr')+
     '<div class="head-row"><div><h1 class="screen-title">QR-Etiketten</h1>'+
       '<p class="screen-sub">'+plural(list.length,'Etikett','Etiketten')+' · '+esc(format.name)+' · '+
-      Math.ceil(list.length / proSeite)+' Bogen</p></div>'+
-      '<button class="btn btn-sm btn-primary" data-act="print-labels">'+icon('printer')+'Drucken</button></div>'+
+      Math.max(1, Math.ceil(list.length / proSeite))+' Bogen</p></div>'+
+      '<button class="btn btn-sm btn-primary" data-act="print-labels"'+(list.length?'':' disabled')+'>'+
+      icon('printer')+'Drucken</button></div>'+
+    '<div class="toggle-row">'+
+      '<button class="toggle" data-etikett-filter="neu" aria-pressed="'+(etikettFilter==='neu'?'true':'false')+'">'+
+        'Noch nicht gedruckt'+(fehlt.length?' ('+fehlt.length+')':'')+'</button>'+
+      '<button class="toggle" data-etikett-filter="alle" aria-pressed="'+(etikettFilter==='alle'?'true':'false')+'">'+
+        'Alle ('+S.copies.length+')</button>'+
+    '</div>'+
     druckLeiste('etikett')+
-    '<div class="notice calm">'+icon('info')+'<span><span class="n-title">Was auf dem Etikett steht</span>'+
-      '<span class="n-body">Inventarnummer und Titel dienen nur der Orientierung im Regal. Erkannt wird ausschließlich der Code.</span></span></div>'+
-    '<span class="eyebrow">Vorschau</span>'+
+    (list.length
+      ? '<div class="notice calm">'+icon('info')+'<span><span class="n-title">Was auf dem Etikett steht</span>'+
+        '<span class="n-body">Inventarnummer und Titel dienen nur der Orientierung im Regal. Erkannt wird ausschließlich der Code. '+
+        'Gedruckte Etiketten werden vermerkt und erscheinen beim nächsten Mal nicht mehr unter „Noch nicht gedruckt".</span></span></div>'
+      : '<div class="card"><div class="empty">'+icon('check')+'<span class="e-title">Alle Exemplare sind beklebt</span>'+
+        '<span>Neu erfasste Bücher tauchen hier automatisch auf.</span></div></div>')+
+    (list.length ? '<span class="eyebrow">Vorschau</span>'+
     '<div class="grid-books" style="grid-template-columns:repeat(auto-fill,minmax(132px,1fr))">'+
       list.map(c => { const t = title(c.titleId);
         return '<div class="card pad" style="text-align:center">'+
           '<div class="qr-frame" style="margin-bottom:8px">'+qrSVG(c.token)+'</div>'+
           '<div style="font-weight:700;font-size:13px" class="inv">'+esc(c.inv)+'</div>'+
-          '<div class="r-sub" style="font-size:12px;line-height:1.3">'+esc(t.title.length>34?t.title.slice(0,32)+'…':t.title)+'</div></div>'; }).join('')+'</div>'+
+          '<div class="r-sub" style="font-size:12px;line-height:1.3">'+esc(t.title.length>34?t.title.slice(0,32)+'…':t.title)+'</div>'+
+          (c.etikettAm ? '<div class="r-sub" style="font-size:11px;margin-top:4px">gedruckt '+fmtDateShort(c.etikettAm)+'</div>' : '')+
+          '</div>'; }).join('')+'</div>' : '')+
   '</div>';
 }
 
@@ -3488,7 +3523,7 @@ function etikettZelle(c, format){
    Drei Wege in den eigenen Bestand: ISBN-Liste (Daten kommen von der DNB),
    Tabelle fuer Buecher ohne ISBN, und eine vollstaendige Sicherung.
    ======================================================================== */
-var FASSUNG = '26.08.2026 · 5';
+var FASSUNG = '26.08.2026 · 6';
 var bestand = { isbnText:'', isbnLauf:null, isbnErgebnis:null, tabText:'', tabErgebnis:null, sicherung:null };
 
 function isbnListeLesen(text){
@@ -3540,7 +3575,7 @@ function isbnListeUebernehmen(){
         ageMin:3, ageMax:6, cats:[], blurb:d.blurb||'', isbn:d.isbn||Buchdaten.formatIsbn(e.isbn),
         lang:'Deutsch', coverIdx:(idx-1) % COVER_PALETTE.length, cover:null });
       S.copies.push({ id:uid('c'), titleId:id, inv:'B-'+String(idx).padStart(3,'0')+'-1',
-        status:'available', token:newToken('B') });
+        status:'available', token:newToken('B'), etikettAm:null });
       neuAngelegt++;
     } else if (e.art === 'dublette'){
       addCopyTo(e.id); zusatz++;
@@ -3578,7 +3613,7 @@ function tabelleUebernehmen(){
       isbn:'', lang:'Deutsch', coverIdx:(idx-1) % COVER_PALETTE.length, cover:null });
     for (var k = 0; k < n.exemplare; k++){
       S.copies.push({ id:uid('c'), titleId:id, inv:'B-'+String(idx).padStart(3,'0')+'-'+(k+1),
-        status:'available', token:newToken('B') });
+        status:'available', token:newToken('B'), etikettAm:null });
       exemplare++;
     }
     titelZahl++;
@@ -3748,9 +3783,15 @@ function printCards(list){
   doPrint(druckBogen(format, list.map(k => karteZelle(k, format)), 'karten'));
   druckHinweis();
 }
+function ohneEtikett(){ return S.copies.filter(c => !c.etikettAm && c.status !== 'retired'); }
 function printLabels(list){
   const format = formatFinden(ETIKETT_FORMATE, druckEinstellungen().etikett);
   doPrint(druckBogen(format, list.map(c => etikettZelle(c, format)), 'etiketten'));
+  /* Gedruckte Etiketten vermerken, damit der Hinweis auf fehlende verschwindet
+     und beim nächsten Mal nur die neuen auf den Bogen kommen. */
+  const heute = todayISO();
+  list.forEach(c => { const e = copy(c.id); if (e) e.etikettAm = heute; });
+  save();
   druckHinweis();
 }
 
@@ -3861,7 +3902,7 @@ function saveBook(){
     cats:d.cats.slice(), blurb:d.blurb||'', isbn:d.isbn||'', lang:d.lang||'Deutsch',
     coverIdx:(idx-1) % COVER_PALETTE.length, cover: flow.foto || null
   });
-  const c = { id:uid('c'), titleId:id, inv:'B-'+String(idx).padStart(3,'0')+'-1', status:'available', token:newToken('B') };
+  const c = { id:uid('c'), titleId:id, inv:'B-'+String(idx).padStart(3,'0')+'-1', status:'available', token:newToken('B'), etikettAm:null };
   S.copies.push(c);
   logAction('Neuer Titel "'+d.title.trim()+'" mit Exemplar '+c.inv+' angelegt');
   save();
@@ -3872,7 +3913,7 @@ function addCopyTo(titleId){
   const t = title(titleId);
   const n = copiesOfTitle(titleId).length + 1;
   const base = t.id.startsWith('t') && /^t\d+$/.test(t.id) ? t.id.slice(1) : String(S.titles.indexOf(t)+1);
-  const c = { id:uid('c'), titleId, inv:'B-'+String(base).padStart(3,'0')+'-'+n, status:'available', token:newToken('B') };
+  const c = { id:uid('c'), titleId, inv:'B-'+String(base).padStart(3,'0')+'-'+n, status:'available', token:newToken('B'), etikettAm:null };
   S.copies.push(c);
   logAction('Weiteres Exemplar '+c.inv+' für "'+t.title+'" angelegt');
   save();
@@ -3930,6 +3971,11 @@ const ACTIONS = {
     rerenderSheet();
   },
   'save-book': () => saveBook(),
+  'etikett-jetzt': () => {
+    const c = copy(flow.newCopyId);
+    if (c) printLabels([c]);
+  },
+  'etikett-spaeter': () => { closeSheet(); go('labels'); },
   'add-restart': () => { flow = { type:'add', step:'choose', draft:null, source:null, dupTitleId:null }; rerenderSheet(); },
   'toggle-avail': () => { lib.avail = !lib.avail; render(); },
   'clear-filters': () => { lib = { q:'', avail:false, age:'', cat:'', only:null }; render(); },
@@ -4014,7 +4060,7 @@ const ACTIONS = {
   'rahmen-umschalten': () => { const d = druckEinstellungen(); d.rahmen = !d.rahmen; save(); render(); },
   'print-anleitung': () => { doPrint('<div class="druckseite anl-seite">'+anleitungInhalt()+'</div>'); },
   'print-cards': () => printCards(S.children.filter(k => k.active && (!kidFilter || k.groupId === kidFilter))),
-  'print-labels': () => printLabels(S.copies),
+  'print-labels': () => printLabels(etikettFilter === 'neu' ? ohneEtikett() : S.copies),
   'roll-analyze': () => { roll.analysis = analyzeRollover(roll.csv); render(); },
   'roll-back': () => { roll.analysis = null; render(); },
   'roll-apply': () => { roll.result = applyRollover(roll.analysis); render(); toast('Jahreswechsel übernommen.'); },
@@ -4032,7 +4078,7 @@ document.addEventListener('click', ev => {
     '[data-extend],[data-lost-card],[data-print-card],[data-toggle-active],[data-rename-group],'+
     '[data-label-copy],[data-add-copy],[data-draft-cat],[data-backdrop],[data-dlg-backdrop],'+
     '[data-dlg-wahl],[data-copy-status],[data-anonymisieren],[data-rolle],[data-pick-copy],[data-pick-return],'+
-    '[data-karte],[data-kartenfeld],[data-zeichen-aendern],[data-zeichen-waehlen]');
+    '[data-karte],[data-kartenfeld],[data-zeichen-aendern],[data-zeichen-waehlen],[data-etikett-filter]');
   if (!el) return;
   const d = el.dataset;
 
@@ -4061,6 +4107,7 @@ document.addEventListener('click', ev => {
     save(); render();
     return;
   }
+  if (d.etikettFilter){ etikettFilter = d.etikettFilter; render(); return; }
   if (d.rolle){
     S.rolle = d.rolle; save();
     if (!istAdmin() && ['settings','groups','rollover','bestand','stats','log'].includes(route.name)) go('more');
