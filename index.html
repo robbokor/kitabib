@@ -440,6 +440,9 @@ tr:last-child td{border-bottom:none}
   /* Beim Druck eines Bogens verschwindet alles andere – auch offene Sheets,
      Dialoge und Hinweisblasen. Sonst verrutscht das Raster auf dem Papier. */
   body.printing-sheet > *:not(#printHost){display:none !important}
+  /* Zweiter, zustandsfreier Weg: Sobald im Druckbogen etwas steht, tritt
+     alles andere zurueck – unabhaengig davon, ob die Klasse noch gesetzt ist. */
+  body:has(#printHost > *) > *:not(#printHost){display:none !important}
   #toast{display:none !important}
   @page{size:A4; margin:0}
   .druckseite{width:210mm; height:297mm; box-sizing:border-box; break-after:page; overflow:hidden}
@@ -1880,6 +1883,7 @@ const PARENT = { book:'library', child:'children', overdue:'start', settings:'mo
 let route = { name:'start', id:null };
 
 function go(name, id){
+  druckModusBeenden();
   route = { name, id: id||null };
   render();
   $('#main').scrollTop = 0;
@@ -1899,7 +1903,7 @@ const scanLock = {};  // Scan-Schutz: Token -> Zeitpunkt der letzten Erfassung
 const SCAN_LOCK_MS = 3000;
 
 function openSheet(cfg){ sheet = cfg; renderSheet(); }
-function closeSheet(){ if (window.Kamera) Kamera.stop(); sheet = null; flow = null; $('#sheetHost').innerHTML = ''; document.body.style.overflow=''; render(); }
+function closeSheet(){ druckModusBeenden(); if (window.Kamera) Kamera.stop(); sheet = null; flow = null; $('#sheetHost').innerHTML = ''; document.body.style.overflow=''; render(); }
 function renderSheet(){
   if (!sheet){ $('#sheetHost').innerHTML=''; if (window.Kamera) Kamera.stop(); return; }
   document.body.style.overflow = 'hidden';
@@ -2661,7 +2665,7 @@ function screenMore(){
       '<span class="r-main"><span class="r-title">'+esc(t)+'</span><span class="r-sub">'+esc(sub)+'</span></span>'+
       '<span class="r-side">'+icon('next')+'</span></button>').join('')+'</div>'+
     '<div class="notice calm">'+icon('info')+'<span><span class="n-title">Prototyp</span>'+
-      '<span class="n-body">Alle Daten liegen nur in diesem Browser. Bestand und Kinder sind Demo-Daten.</span></span>'+
+      '<span class="n-body">Alle Daten liegen nur in diesem Browser. Bestand und Kinder sind Demo-Daten.<br>Fassung '+esc(FASSUNG)+'</span></span>'+
       (admin ? '<span class="n-action"><button class="btn btn-sm" data-act="reset">'+icon('refresh')+'Zurücksetzen</button></span>' : '')+'</div>'+
   '</div>';
 }
@@ -3351,6 +3355,7 @@ function etikettZelle(c, format){
    Drei Wege in den eigenen Bestand: ISBN-Liste (Daten kommen von der DNB),
    Tabelle fuer Buecher ohne ISBN, und eine vollstaendige Sicherung.
    ======================================================================== */
+var FASSUNG = '26.08.2026 · 3';
 var bestand = { isbnText:'', isbnLauf:null, isbnErgebnis:null, tabText:'', tabErgebnis:null, sicherung:null };
 
 function isbnListeLesen(text){
@@ -3582,29 +3587,26 @@ function toast(msg){
 }
 
 /* --------------------------------------------------------------- Druck */
-/* Der Druckmodus muss bestehen bleiben, solange der Druckdialog offen ist.
-   Auf dem iPad vergehen dabei leicht Minuten – eine feste Wartezeit reicht
-   nicht, sonst landet die ganze App auf dem Papier. */
+/* Der Druckbogen bleibt stehen, bis der Nutzer weiterarbeitet.
+   Jede Zeitsteuerung ist hier falsch: Auf dem iPad erzeugt Safari das
+   Druckbild irgendwann nach dem Aufruf – teils erst, wenn in der Vorschau
+   geblättert wird. Wird der Modus vorher abgeschaltet, landet die ganze
+   Oberflaeche auf dem Papier. Auf dem Bildschirm stoert der stehengebliebene
+   Bogen nicht, er ist dort ohnehin ausgeblendet. */
 function druckModusBeenden(){
   document.body.classList.remove('printing-sheet');
-  window.removeEventListener('afterprint', druckModusBeenden);
-  if (druckMedium && druckMedium.removeEventListener) druckMedium.removeEventListener('change', druckWechsel);
+  var host = document.getElementById('printHost');
+  if (host) host.innerHTML = '';
 }
-var druckMedium = window.matchMedia ? window.matchMedia('print') : null;
-function druckWechsel(e){ if (!e.matches) druckModusBeenden(); }
-
 function doPrint(html){
+  druckModusBeenden();
   $('#printHost').innerHTML = html;
   document.body.classList.add('printing-sheet');
-  window.addEventListener('afterprint', druckModusBeenden);
-  if (druckMedium && druckMedium.addEventListener) druckMedium.addEventListener('change', druckWechsel);
   let printed = false;
   try { window.print(); printed = true; } catch (e) { printed = false; }
   if (!printed) toast('Druck ist in dieser Ansicht gesperrt – Seite in einem eigenen Tab öffnen und dort drucken.');
-  /* Rückfallebenen, falls der Browser das Ende des Drucks nicht meldet */
-  setTimeout(() => document.addEventListener('pointerdown', druckModusBeenden, { once:true }), 1200);
-  setTimeout(druckModusBeenden, 300000);
 }
+
 function druckHinweis(){
   toast('Im Druckdialog „Tatsächliche Größe" bzw. 100 % wählen – nicht „An Seite anpassen".');
 }
