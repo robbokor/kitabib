@@ -1760,7 +1760,9 @@ const SEED_CHILDREN = [
 ];
 
 function buildSeed(){
-  const org = { name:'Kita Sonnenblume', loanDays:14, maxBooks:4, showGroupOnCard:true };
+  const org = { name:'Kita Sonnenblume', loanDays:14, maxBooks:4,
+                loanDaysGruppe:28, maxBooksGruppe:0,   // 0 = unbegrenzt
+                showGroupOnCard:true };
   const groups = SEED_GROUPS.map((name,i)=>({ id:'g'+(i+1), name }));
   const children = SEED_CHILDREN.map(([name,gi],i)=>({
     id:'k'+(i+1), name, groupId:groups[gi].id, active:true,
@@ -1837,6 +1839,35 @@ function logAction(text){
    im MVP entscheidet die Anmeldung darüber. */
 function istAdmin(){ return (S.rolle || 'admin') === 'admin'; }
 
+/* Neben den Kinderkonten kann jede Gruppe ein eigenes Konto haben – für
+   Themenkisten, die wochenlang im Gruppenraum stehen. Dahinter steckt keine
+   Person, sondern eine Organisationseinheit; deshalb gelten andere Regeln
+   und es gibt nichts zu anonymisieren. */
+function istGruppenkonto(k){ return !!k && k.typ === 'gruppe'; }
+function echteKinder(){ return S.children.filter(k => !istGruppenkonto(k)); }
+function gruppenkonten(){ return S.children.filter(istGruppenkonto); }
+function gruppenkontoVon(gid){ return S.children.filter(k => istGruppenkonto(k) && k.groupId === gid)[0]; }
+function grenzeFuer(k){
+  if (!istGruppenkonto(k)) return S.org.maxBooks;
+  const g = S.org.maxBooksGruppe;
+  return (g === 0 || g === undefined || g === null) ? Infinity : g;   // 0 = unbegrenzt
+}
+function leihdauerFuer(k){
+  return istGruppenkonto(k) ? (S.org.loanDaysGruppe || 28) : S.org.loanDays;
+}
+function grenzeText(k){
+  const g = grenzeFuer(k);
+  return g === Infinity ? 'unbegrenzt' : g + ' Bücher';
+}
+function gruppenkontoAnlegen(g){
+  const k = { id: uid('gk'), name: g.name, groupId: g.id, active: true, typ: 'gruppe',
+              token: newToken('G'), importKey: null, familyId: null };
+  S.children.push(k);
+  logAction('Gruppenkonto für „'+g.name+'" angelegt');
+  save();
+  return k;
+}
+
 /* Was auf dem Bibliotheksausweis erscheint, entscheidet jede Einrichtung
    selbst – die Bedarfe gehen weit auseinander, und jede Angabe mehr ist eine
    Angabe, die auf einem Kärtchen die Kita verlassen kann. */
@@ -1857,7 +1888,7 @@ function karteEinstellungen(){
    wird wenigstens innerhalb der Gruppe kein Zeichen doppelt vergeben. */
 function zeichenFuer(k){
   if (k.zeichen) return k.zeichen;
-  const imHaus = S.children.filter(x => x.id !== k.id && x.zeichen).map(x => x.zeichen);
+  const imHaus = echteKinder().filter(x => x.id !== k.id && x.zeichen).map(x => x.zeichen);
   const hausweitFrei = ZEICHEN.filter(z => imHaus.indexOf(z) < 0);
   if (hausweitFrei.length){ k.zeichen = hausweitFrei[0]; return k.zeichen; }
   const inGruppe = S.children.filter(x => x.groupId === k.groupId && x.id !== k.id && x.zeichen).map(x => x.zeichen);
@@ -2176,7 +2207,7 @@ function loanBody(){
   if (flow.step === 'books'){
     const k = child(flow.childId);
     const openCount = loansOfChild(k.id).length;
-    const limitLeft = S.org.maxBooks - openCount - flow.copyIds.length;
+    const limitLeft = grenzeFuer(k) - openCount - flow.copyIds.length;
     const picked = flow.copyIds.map(cid => {
       const c = copy(cid), t = title(c.titleId);
       return '<div class="row"><span class="stripe available"></span>'+
@@ -2192,7 +2223,7 @@ function loanBody(){
         (openCount ? plural(openCount,'Buch','Bücher')+' bereits ausgeliehen' : 'keine offenen Ausleihen')+'</span></span>'+
         '<button class="btn btn-sm" data-act="change-child">Kind wechseln</button></div>'+
       (flow.msg ? flashMsg(flow.msg.kind, flow.msg.text) : '')+
-      (limitLeft <= 0 ? flashMsg('warn','Grenze erreicht: '+S.org.maxBooks+' Bücher gleichzeitig je Kind.') : '')+
+      (limitLeft <= 0 ? flashMsg('warn','Grenze erreicht: '+grenzeText(k)+' gleichzeitig.') : '')+
       (flow.copyIds.length ? '<div class="list">'+picked+'</div>' : '')+
       viewfinder('Buch scannen'+(flow.copyIds.length ? ' – oder Ausleihe abschließen' : ''), 'buch')+
       '<button class="btn btn-block" data-act="buch-suchen">'+icon('search')+'Buch ohne Etikett suchen</button>'+
@@ -2219,7 +2250,7 @@ function loanBody(){
   }
   if (flow.step === 'done'){
     const k = child(flow.childId);
-    const due = addDays(todayISO(), S.org.loanDays);
+    const due = addDays(todayISO(), leihdauerFuer(k));
     return '<div class="success"><span class="s-mark">'+icon('check')+'</span>'+
       '<span class="s-title">'+esc(plural(flow.copyIds.length,'Buch','Bücher'))+' für '+esc(k.name)+'</span>'+
       '<span class="s-body">Rückgabe bis <strong>'+fmtDate(due)+'</strong> · '+esc(groupName(k.groupId))+'</span></div>'+
@@ -2614,8 +2645,9 @@ function screenScan(){
 /* --------------------------------------------------------------- Kinder */
 let kidFilter = '';
 function screenChildren(){
-  const list = S.children.filter(k => !kidFilter || k.groupId === kidFilter);
+  const list = echteKinder().filter(k => !kidFilter || k.groupId === kidFilter);
   const active = list.filter(k=>k.active), inactive = list.filter(k=>!k.active);
+  const konten = gruppenkonten().filter(k => !kidFilter || k.groupId === kidFilter);
   const rowFor = k => {
     const ls = loansOfChild(k.id), od = ls.filter(isOverdue).length;
     return '<button class="row" data-child="'+k.id+'"><span class="avatar">'+esc(k.name[0])+'</span>'+
@@ -2629,11 +2661,23 @@ function screenChildren(){
   };
   return '<div class="stack">'+
     '<div class="head-row"><div><h1 class="screen-title">Kinder</h1>'+
-      '<p class="screen-sub">'+plural(S.children.filter(k=>k.active).length,'aktives Konto','aktive Konten')+' · nur die Angaben, die die Bibliothek braucht</p></div>'+
+      '<p class="screen-sub">'+plural(echteKinder().filter(k=>k.active).length,'aktives Konto','aktive Konten')+
+      (gruppenkonten().length ? ' · '+plural(gruppenkonten().length,'Gruppenkonto','Gruppenkonten') : '')+
+      ' · nur die Angaben, die die Bibliothek braucht</p></div>'+
       '<button class="btn btn-sm" data-go="cards">'+icon('printer')+'Karten drucken</button></div>'+
     '<div class="toggle-row"><button class="toggle" data-group="" aria-pressed="'+(kidFilter?'false':'true')+'">Alle Gruppen</button>'+
       S.groups.map(g=>'<button class="toggle" data-group="'+g.id+'" aria-pressed="'+(kidFilter===g.id?'true':'false')+'">'+esc(g.name)+'</button>').join('')+'</div>'+
     '<div class="list">'+active.map(rowFor).join('')+'</div>'+
+    (konten.length ? '<div class="section"><span class="eyebrow">Gruppenkonten</span><div class="list">'+
+      konten.map(k => { const ls = loansOfChild(k.id), od = ls.filter(isOverdue).length;
+        return '<button class="row" data-child="'+k.id+'"><span class="avatar">'+icon('users')+'</span>'+
+          '<span class="r-main"><span class="r-title">'+esc(k.name)+'</span>'+
+          '<span class="r-sub">Gruppenkonto · '+grenzeText(k)+' · '+leihdauerFuer(k)+' Tage</span></span>'+
+          '<span class="r-side">'+
+            (od ? '<span class="chip overdue">'+icon('alert')+plural(od,'überfällig','überfällig')+'</span>' : '')+
+            (ls.length ? '<span class="chip loaned">'+icon('book')+plural(ls.length,'Buch','Bücher')+'</span>'
+                       : '<span class="chip">keine Ausleihe</span>')+
+            icon('next')+'</span></button>'; }).join('')+'</div></div>' : '')+
     (inactive.length ? '<div class="section"><span class="eyebrow">Inaktive Konten</span><div class="list">'+inactive.map(rowFor).join('')+'</div></div>' : '')+
   '</div>';
 }
@@ -2652,6 +2696,42 @@ function screenChild(){
       plural(history,'Rückgabe','Rückgaben')+'), damit die Bestandsstatistik vollständig bleibt.</span></span></div>'+
     '</div>';
   }
+  if (istGruppenkonto(k)){
+    const offen = loansOfChild(k.id);
+    return '<div class="stack">'+backTo('children','Kinder')+
+      '<div class="head-row"><div style="display:flex;gap:14px;align-items:center">'+
+        '<span class="avatar" style="width:56px;height:56px">'+icon('users')+'</span>'+
+        '<div><h1 class="screen-title">'+esc(k.name)+'</h1>'+
+        '<p class="screen-sub">Gruppenkonto · '+grenzeText(k)+' · '+leihdauerFuer(k)+' Tage Frist</p></div></div>'+
+        '<button class="btn btn-sm" data-act="loan-for-child">'+icon('scan')+'Für die Gruppe ausleihen</button></div>'+
+      '<div class="section"><span class="eyebrow">Bücher im Gruppenraum ('+offen.length+')</span>'+
+        (offen.length ? '<div class="list">'+offen.map(l => { const c = copy(l.copyId), t = title(c.titleId), over = isOverdue(l);
+            return '<div class="row"><span class="stripe '+(over?'overdue':'loaned')+'"></span>'+
+              '<span class="r-main"><span class="r-title">'+esc(t.title)+'</span>'+
+              '<span class="r-sub">'+esc(c.inv)+' · fällig '+fmtDate(l.due)+'</span></span>'+
+              '<span class="r-side">'+statusChip('loaned', over)+
+              '<button class="btn btn-sm" data-extend="'+l.id+'">Verlängern</button></span></div>'; }).join('')+'</div>'
+          : '<div class="card"><div class="empty">'+icon('book')+'<span class="e-title">Zurzeit keine Bücher im Gruppenraum</span></div></div>')+
+      '</div>'+
+      '<div class="section"><span class="eyebrow">Ausweis der Gruppe</span>'+
+        '<div class="kidcard"><div class="qr-frame kc-qr">'+qrSVG(k.token)+'</div>'+
+          '<div style="flex:1"><div class="kc-name">'+esc(k.name)+'</div>'+
+          '<div class="kc-group">Gruppenkonto</div>'+
+          '<div class="kc-org">'+esc(S.org.name)+'</div>'+
+          '<div class="token" style="margin-top:10px">'+esc(k.token)+'</div>'+
+          '<div class="hint" style="margin-top:6px">Am besten im Gruppenordner aufbewahren – hinter diesem Konto steht keine Person.</div>'+
+          '<div class="btn-row" style="margin-top:12px">'+
+            (istAdmin() ? '<button class="btn btn-sm" data-lost-card="'+k.id+'">'+icon('refresh')+'Karte ersetzen</button>' : '')+
+            '<button class="btn btn-sm" data-print-card="'+k.id+'">'+icon('printer')+'Karte drucken</button>'+
+          '</div></div></div>'+
+      '</div>'+
+      (istAdmin() ? '<div class="section"><span class="eyebrow">Konto</span>'+
+        '<button class="btn btn-sm btn-danger" style="align-self:flex-start" data-gruppenkonto-weg="'+k.id+'">'+
+          icon('trash')+'Gruppenkonto entfernen</button>'+
+        (offen.length ? '<p class="hint">Erst die '+plural(offen.length,'Buch','Bücher')+' zurücknehmen.</p>' : '') +
+      '</div>' : '')+
+    '</div>';
+  }
   const geschwister = k.familyId ? S.children.filter(x => x.familyId === k.familyId && x.id !== k.id && !x.anonym) : [];
   return '<div class="stack">'+
     '<button class="btn btn-ghost btn-sm" data-nav="children">'+icon('back')+'Kinder</button>'+
@@ -2660,7 +2740,8 @@ function screenChild(){
       '<div><h1 class="screen-title">'+esc(k.name)+'</h1>'+
       '<p class="screen-sub">'+esc(groupName(k.groupId))+' · '+(k.active?'aktiv':'inaktiv')+' · '+plural(history,'Rückgabe','Rückgaben')+' bisher</p></div></div>'+
       '<button class="btn btn-sm" data-act="loan-for-child">'+icon('scan')+'Für '+esc(k.name)+' ausleihen</button></div>'+
-    '<div class="section"><span class="eyebrow">Aktuelle Ausleihen ('+ls.length+' von max. '+S.org.maxBooks+')</span>'+
+    '<div class="section"><span class="eyebrow">Aktuelle Ausleihen ('+ls.length+
+      (grenzeFuer(k)===Infinity ? ' · unbegrenzt' : ' von max. '+grenzeFuer(k))+')</span>'+
       (ls.length ? '<div class="list">'+ls.map(l => { const c = copy(l.copyId), t = title(c.titleId), over = isOverdue(l);
           return '<div class="row"><span class="stripe '+(over?'overdue':'loaned')+'"></span>'+
             '<span class="r-main"><span class="r-title">'+esc(t.title)+'</span>'+
@@ -2779,6 +2860,19 @@ function screenSettings(){
       '<p class="hint">Änderungen an der Ausleihdauer gelten für neue Ausleihen. Laufende behalten ihr Rückgabedatum.</p>'+
     '</div>'+
 
+    '<div class="section"><span class="eyebrow">Gruppenkonten</span>'+
+      '<div class="card pad stack">'+
+        '<div class="grid-2">'+
+          '<div class="field"><label for="setDaysG">Ausleihdauer in Tagen</label>'+
+            '<input id="setDaysG" data-set="loanDaysGruppe" type="number" min="1" max="365" value="'+(S.org.loanDaysGruppe||28)+'"></div>'+
+          '<div class="field"><label for="setMaxG">Bücher gleichzeitig (0 = unbegrenzt)</label>'+
+            '<input id="setMaxG" data-set="maxBooksGruppe" type="number" min="0" max="200" value="'+(S.org.maxBooksGruppe||0)+'"></div>'+
+        '</div>'+
+        '<p class="hint">Gilt für Konten von Gruppen, nicht für Kinder. Themenkisten stehen oft wochenlang im Gruppenraum – '+
+        'deshalb längere Frist und in der Regel keine Obergrenze. Angelegt werden Gruppenkonten unter Mehr → Gruppen.</p>'+
+      '</div>'+
+    '</div>'+
+
     '<div class="section"><span class="eyebrow">Was auf dem Bibliotheksausweis steht</span>'+
       '<div class="card pad stack" style="gap:16px">'+
         '<p class="hint">Jede Einrichtung entscheidet selbst. Denk daran: Die Karte ist ein Gegenstand, '+
@@ -2812,12 +2906,23 @@ function screenGroups(){
       '<p class="screen-sub">Ein Gruppenwechsel ändert weder Karte noch laufende Ausleihen</p></div>'+
       '<button class="btn btn-sm" data-act="add-group">'+icon('plus')+'Gruppe anlegen</button></div>'+
     '<div class="list">'+S.groups.map(g => {
-      const n = S.children.filter(k=>k.groupId===g.id && k.active).length;
+      const n = echteKinder().filter(k => k.groupId===g.id && k.active).length;
+      const konto = gruppenkontoVon(g.id);
+      const offen = konto ? loansOfChild(konto.id).length : 0;
       return '<div class="row"><span class="avatar">'+icon('users')+'</span>'+
         '<span class="r-main"><span class="r-title">'+esc(g.name)+'</span>'+
-        '<span class="r-sub">'+plural(n,'Kind','Kinder')+'</span></span>'+
-        '<span class="r-side"><button class="btn btn-sm" data-rename-group="'+g.id+'">Umbenennen</button></span></div>';
+        '<span class="r-sub">'+plural(n,'Kind','Kinder')+
+        (konto ? ' · Gruppenkonto: '+plural(offen,'Buch','Bücher') : ' · kein Gruppenkonto')+'</span></span>'+
+        '<span class="r-side">'+
+          (konto
+            ? '<button class="btn btn-sm" data-child="'+konto.id+'">'+icon('card')+'Konto öffnen</button>'
+            : '<button class="btn btn-sm" data-gruppenkonto="'+g.id+'">'+icon('plus')+'Gruppenkonto</button>')+
+          '<button class="btn btn-sm" data-rename-group="'+g.id+'">Umbenennen</button></span></div>';
     }).join('')+'</div>'+
+    '<div class="notice calm">'+icon('info')+'<span><span class="n-title">Wozu ein Gruppenkonto?</span>'+
+      '<span class="n-body">Für Bücher, die als Themenkiste in den Gruppenraum wandern statt zu einem einzelnen Kind. '+
+      'Es gelten eigene Regeln: '+((S.org.maxBooksGruppe||0)===0 ? 'unbegrenzt viele Bücher' : S.org.maxBooksGruppe+' Bücher')+
+      ' für '+(S.org.loanDaysGruppe||28)+' Tage. Hinter einem Gruppenkonto steht keine Person – es gibt dort nichts zu löschen.</span></span></div>'+
   '</div>';
 }
 
@@ -3066,7 +3171,9 @@ function anleitungInhalt(){
   return '<div class="anleitung">'+
     '<header class="anl-kopf"><div><div class="anl-marke">KitaBib</div>'+
       '<div class="anl-unter">'+esc(S.org.name)+' · Kurzanleitung für den Tresen</div></div>'+
-      '<div class="anl-regel">Ausleihdauer '+S.org.loanDays+' Tage<br>höchstens '+S.org.maxBooks+' Bücher je Kind</div></header>'+
+      '<div class="anl-regel">Ausleihdauer '+S.org.loanDays+' Tage<br>höchstens '+S.org.maxBooks+' Bücher je Kind'+
+      (gruppenkonten().length ? '<br>Gruppenkonto: '+(S.org.loanDaysGruppe||28)+' Tage, '+
+        ((S.org.maxBooksGruppe||0)===0?'unbegrenzt':S.org.maxBooksGruppe+' Bücher') : '')+'</div></header>'+
     '<div class="anl-spalten">'+
       schritte('Buch ausleihen', '1', [
         'Auf <b>Ausleihen</b> tippen.',
@@ -3134,7 +3241,7 @@ function screenPrivacy(){
 /* -------------------------------------------------------- Jahreswechsel */
 let roll = { csv:null, analysis:null, result:null };
 function defaultRolloverCSV(){
-  const active = S.children.filter(k => k.active);
+  const active = echteKinder().filter(k => k.active);
   const withLoans = active.find(k => loansOfChild(k.id).length);
   const withoutLoans = active.find(k => !loansOfChild(k.id).length && k !== withLoans);
   const skip = [withLoans && withLoans.id, withoutLoans && withoutLoans.id];
@@ -3159,14 +3266,14 @@ function analyzeRollover(csv){
     const [key, name, gname] = p;
     const g = S.groups.find(x => x.name.toLowerCase() === gname.toLowerCase());
     if (!g){ out.fehler.push({ line, grund:'Gruppe "'+gname+'" gibt es nicht' }); return; }
-    const ex = S.children.find(k => k.importKey === key);
+    const ex = S.children.find(k => !istGruppenkonto(k) && k.importKey === key);
     if (ex){
       seen[ex.id] = true;
       if (ex.groupId !== g.id) out.wechsel.push({ id:ex.id, name:ex.name, from:groupName(ex.groupId), toId:g.id, to:g.name });
       else out.gleich.push({ id:ex.id, name:ex.name, group:g.name });
     } else out.neu.push({ key, name, groupId:g.id, group:g.name });
   });
-  S.children.filter(k => k.active).forEach(k => {
+  echteKinder().filter(k => k.active).forEach(k => {
     if (!seen[k.id]) out.fehlt.push({ id:k.id, name:k.name, group:groupName(k.groupId), loans:loansOfChild(k.id).length });
   });
   return out;
@@ -3472,19 +3579,24 @@ function karteZelle(k, format){
   const e = karteEinstellungen();
   const stehend = format.hoehe > format.breite;
   const gross = format.breite >= 100;
-  const zeichen = e.feld === 'symbol' ? zeichenFuer(k) : null;
+  const zeichen = (e.feld === 'symbol' && !istGruppenkonto(k)) ? zeichenFuer(k) : null;
   const feldMm = stehend ? (gross ? 34 : 22) : 18;
 
-  const feldHtml = e.feld === 'aufkleben'
+  const feldHtml = istGruppenkonto(k) ? ''
+    : e.feld === 'aufkleben'
       ? '<div class="az-feld" style="width:'+feldMm+'mm;height:'+feldMm+'mm"><span>Foto</span></div>'
     : e.feld === 'symbol'
       ? '<div class="az-zeichen" style="width:'+feldMm+'mm;height:'+feldMm+'mm;font-size:'+(feldMm*0.62)+'mm">'+zeichen+'</div>'
       : '';
 
-  const textHtml =
-    (e.kita ? '<div class="az-kopf">Bibliotheksausweis · '+esc(S.org.name)+'</div>' : '<div class="az-kopf">Bibliotheksausweis</div>')+
-    (e.vorname ? '<div class="az-name" style="font-size:'+(gross?24:16)+'pt">'+esc(k.name)+'</div>' : '')+
-    (e.gruppe ? '<div class="az-gruppe">'+esc(groupName(k.groupId))+'</div>' : '');
+  const gk = istGruppenkonto(k);
+  const textHtml = gk
+    ? ((e.kita ? '<div class="az-kopf">Bibliotheksausweis · '+esc(S.org.name)+'</div>' : '<div class="az-kopf">Bibliotheksausweis</div>')+
+       '<div class="az-name" style="font-size:'+(gross?24:16)+'pt">'+esc(k.name)+'</div>'+
+       '<div class="az-gruppe">Gruppenkonto</div>')
+    : ((e.kita ? '<div class="az-kopf">Bibliotheksausweis · '+esc(S.org.name)+'</div>' : '<div class="az-kopf">Bibliotheksausweis</div>')+
+       (e.vorname ? '<div class="az-name" style="font-size:'+(gross?24:16)+'pt">'+esc(k.name)+'</div>' : '')+
+       (e.gruppe ? '<div class="az-gruppe">'+esc(groupName(k.groupId))+'</div>' : ''));
 
   if (!stehend){
     return '<div class="druckzelle'+(druckEinstellungen().rahmen?' mit-rahmen':'')+'">'+
@@ -3523,7 +3635,7 @@ function etikettZelle(c, format){
    Drei Wege in den eigenen Bestand: ISBN-Liste (Daten kommen von der DNB),
    Tabelle fuer Buecher ohne ISBN, und eine vollstaendige Sicherung.
    ======================================================================== */
-var FASSUNG = '26.08.2026 · 6';
+var FASSUNG = '28.08.2026 · 7';
 var bestand = { isbnText:'', isbnLauf:null, isbnErgebnis:null, tabText:'', tabErgebnis:null, sicherung:null };
 
 function isbnListeLesen(text){
@@ -3819,15 +3931,16 @@ function scanCopyForLoan(tok){
     return rerenderSheet();
   }
   const open = loansOfChild(flow.childId).length + flow.copyIds.length;
-  if (open >= S.org.maxBooks){
-    flow.msg = { kind:'warn', text:'Grenze erreicht: höchstens '+S.org.maxBooks+' Bücher je Kind.' };
+  if (open >= grenzeFuer(child(flow.childId))){
+    flow.msg = { kind:'warn', text:'Grenze erreicht: höchstens '+grenzeText(child(flow.childId))+'.' };
     return rerenderSheet();
   }
   flow.copyIds.push(c.id); flow.msg = null;
   rerenderSheet();
 }
 function confirmLoan(){
-  const t = todayISO(), due = addDays(t, S.org.loanDays);
+  const k = child(flow.childId);
+  const t = todayISO(), due = addDays(t, leihdauerFuer(k));
   flow.copyIds.forEach(cid => {
     copy(cid).status = 'loaned';
     S.loans.push({ id:uid('l'), copyId:cid, childId:flow.childId, start:t, due, returnedAt:null });
@@ -4078,7 +4191,8 @@ document.addEventListener('click', ev => {
     '[data-extend],[data-lost-card],[data-print-card],[data-toggle-active],[data-rename-group],'+
     '[data-label-copy],[data-add-copy],[data-draft-cat],[data-backdrop],[data-dlg-backdrop],'+
     '[data-dlg-wahl],[data-copy-status],[data-anonymisieren],[data-rolle],[data-pick-copy],[data-pick-return],'+
-    '[data-karte],[data-kartenfeld],[data-zeichen-aendern],[data-zeichen-waehlen],[data-etikett-filter]');
+    '[data-karte],[data-kartenfeld],[data-zeichen-aendern],[data-zeichen-waehlen],[data-etikett-filter],'+
+    '[data-gruppenkonto],[data-gruppenkonto-weg]');
   if (!el) return;
   const d = el.dataset;
 
@@ -4107,6 +4221,29 @@ document.addEventListener('click', ev => {
     save(); render();
     return;
   }
+  if (d.gruppenkonto){
+    const g = group(d.gruppenkonto);
+    if (!g) return;
+    if (gruppenkontoVon(g.id)){ toast('Diese Gruppe hat schon ein Konto.'); return; }
+    const k = gruppenkontoAnlegen(g);
+    go('child', k.id);
+    toast('Gruppenkonto angelegt – Karte drucken und in den Gruppenordner legen.');
+    return;
+  }
+  if (d.gruppenkontoWeg){
+    const k = child(d.gruppenkontoWeg);
+    if (!k) return;
+    if (loansOfChild(k.id).length){ toast('Erst die Bücher zurücknehmen.'); return; }
+    askConfirm({ title:'Gruppenkonto entfernen',
+      body:'Das Konto von '+k.name+' wird gelöscht. Die Bücher der Gruppe bleiben im Bestand.',
+      ok:'Entfernen', danger:true }, () => {
+      S.children = S.children.filter(x => x.id !== k.id);
+      logAction('Gruppenkonto „'+k.name+'" entfernt');
+      save(); go('groups');
+      toast('Gruppenkonto entfernt.');
+    });
+    return;
+  }
   if (d.etikettFilter){ etikettFilter = d.etikettFilter; render(); return; }
   if (d.rolle){
     S.rolle = d.rolle; save();
@@ -4124,9 +4261,9 @@ document.addEventListener('click', ev => {
     const c = copy(d.pickCopy);
     if (!c) return;
     const offen = loansOfChild(flow.childId).length + flow.copyIds.length;
-    if (offen >= S.org.maxBooks){
+    if (offen >= grenzeFuer(child(flow.childId))){
       flow.step = 'books';
-      flow.msg = { kind:'warn', text:'Grenze erreicht: höchstens '+S.org.maxBooks+' Bücher je Kind.' };
+      flow.msg = { kind:'warn', text:'Grenze erreicht: höchstens '+grenzeText(child(flow.childId))+'.' };
       rerenderSheet(); return;
     }
     flow.copyIds.push(c.id);
@@ -4163,7 +4300,7 @@ document.addEventListener('click', ev => {
   }
   if (d.extend){
     const l = S.loans.find(x => x.id === d.extend);
-    if (l){ l.due = addDays(todayISO(), S.org.loanDays);
+    if (l){ l.due = addDays(todayISO(), leihdauerFuer(child(l.childId)));
       logAction('Ausleihe von '+child(l.childId).name+' bis '+fmtDate(l.due)+' verlängert');
       save(); render(); toast('Verlängert bis '+fmtDate(l.due)+'.'); }
     return;
@@ -4317,6 +4454,7 @@ document.addEventListener('input', ev => {
   if (d.set){
     const v = el.value;
     if (d.set === 'name') S.org.name = v || 'Einrichtung';
+    else if (d.set === 'maxBooksGruppe') S.org.maxBooksGruppe = Math.max(0, parseInt(v, 10) || 0);
     else S.org[d.set] = Math.max(1, +v || 1);
     $('#orgName').textContent = S.org.name;
     save();
