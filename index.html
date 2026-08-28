@@ -2502,6 +2502,9 @@ function screenStart(){
   const damaged = S.copies.filter(c => c.status === 'damaged');
   const dueToday = loans.filter(l => l.due === todayISO());
   const notices = [];
+  if (neueFassung) notices.push({ cls:'todo', ic:'refresh', t:'Neue Fassung verfügbar',
+    b:'Auf diesem Gerät läuft '+FASSUNG+', bereit liegt '+neueFassung+'.',
+    act:'<button class="btn btn-sm" data-act="fassung-laden">'+icon('refresh')+'Jetzt laden</button>' });
   if (over.length) notices.push({ cls:'overdue', ic:'alert', t:plural(over.length,'überfälliges Buch','überfällige Bücher'),
     b: over.slice(0,3).map(l => child(l.childId).name+' · '+title(copy(l.copyId).titleId).title).join(' · '),
     act:'<button class="btn btn-sm" data-go="overdue">Ansehen</button>' });
@@ -3635,7 +3638,7 @@ function etikettZelle(c, format){
    Drei Wege in den eigenen Bestand: ISBN-Liste (Daten kommen von der DNB),
    Tabelle fuer Buecher ohne ISBN, und eine vollstaendige Sicherung.
    ======================================================================== */
-var FASSUNG = '28.08.2026 · 7';
+var FASSUNG = '28.08.2026 · 8';
 var bestand = { isbnText:'', isbnLauf:null, isbnErgebnis:null, tabText:'', tabErgebnis:null, sicherung:null };
 
 function isbnListeLesen(text){
@@ -3817,6 +3820,39 @@ function sicherungEinlesen(text){
     return null;
   } catch (e) { return 'Die Datei ließ sich nicht lesen: ' + e.message; }
 }
+</script>
+<script>
+/* ============================================== Neue Fassung erkennen =====
+   iOS haelt Web-Apps vom Home-Bildschirm lange im Speicher und laedt die Seite
+   von sich aus nicht neu. Ohne diese Pruefung arbeitet ein Geraet wochenlang
+   mit einem alten Stand, ohne dass es jemand merkt. Deshalb: beim Start und
+   bei jeder Rueckkehr in die App nachsehen, hoechstens einmal je Stunde.
+   ======================================================================== */
+var neueFassung = null, fassungZuletztGeprueft = 0;
+function fassungPruefen(erzwingen){
+  if (!erzwingen && fassungZuletztGeprueft && Date.now() - fassungZuletztGeprueft < 3600000) return;
+  if (navigator.onLine === false) return;
+  fassungZuletztGeprueft = Date.now();
+  var ziel = location.pathname + (location.pathname.slice(-1) === '/' ? '' : '') + '?stand=' + Date.now();
+  fetch(ziel, { cache: 'no-store' })
+    .then(function (r) { return r.ok ? r.text() : null; })
+    .then(function (t) {
+      if (!t) return;
+      var m = t.match(/var FASSUNG = '([^']+)'/);
+      if (m && m[1] !== FASSUNG && m[1] !== neueFassung){
+        neueFassung = m[1];
+        render();
+      }
+    })
+    .catch(function () { /* offline oder Zugriff nach aussen gesperrt: still bleiben */ });
+}
+function neueFassungLaden(){
+  try { location.replace(location.pathname + '?v=' + Date.now()); }
+  catch (e) { location.reload(); }
+}
+document.addEventListener('visibilitychange', function () {
+  if (document.visibilityState === 'visible') fassungPruefen();
+});
 </script>
 <script>
 /* ============================================================ Rendering */
@@ -4123,6 +4159,7 @@ const ACTIONS = {
   },
   'tab-uebernehmen': () => tabelleUebernehmen(),
   'tab-verwerfen': () => { bestand.tabErgebnis = null; render(); },
+  'fassung-laden': () => neueFassungLaden(),
   'sicherung-oeffnen': () => openSicherung(),
   'sicherung-datei': () => {
     if (!dateiSpeichernMoeglich()){
@@ -4494,4 +4531,5 @@ document.addEventListener('keydown', ev => {
 /* ---------------------------------------------------------------- Start */
 S = load();
 render();
+fassungPruefen(true);
 </script>
