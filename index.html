@@ -1976,7 +1976,7 @@ const NAV = [
   { id:'more',     label:'Mehr',       icon:'more' }
 ];
 const PARENT = { book:'library', child:'children', overdue:'start', settings:'more', groups:'more',
-                 labels:'more', cards:'more', rollover:'more', bestand:'more', stats:'more', anleitung:'more', log:'more', privacy:'more' };
+                 labels:'more', cards:'more', rollover:'more', bestand:'more', stats:'more', anleitung:'more', kinderimport:'more', log:'more', privacy:'more' };
 let route = { name:'start', id:null };
 
 function go(name, id){
@@ -2819,7 +2819,8 @@ function screenMore(){
     ['groups','Gruppen','Anlegen, umbenennen','users', true],
     ['cards','Bibliothekskarten','Karten für Gruppen drucken','card', false],
     ['labels','QR-Etiketten','Etiketten für Exemplare drucken','label', false],
-    ['rollover','Jahreswechsel','Neue Liste einlesen, prüfen, bestätigen','swap', true],
+    ['kinderimport','Kinder einlesen','Excel- oder CSV-Liste, auch in eine neue Gruppe','users', true],
+    ['rollover','Jahreswechsel','Gesamten Bestand abgleichen, Ausgeschiedene deaktivieren','swap', true],
     ['bestand','Bestand übernehmen','Eigene Bücher einlesen und sichern','book', true],
     ['stats','Statistik','Bestand und Ausleihen in Zahlen','chart', true],
     ['log','Protokoll','Verwaltungsaktionen der letzten Zeit','list', true],
@@ -3209,6 +3210,154 @@ function screenAnleitung(){
       '<p class="screen-sub">Eine Seite zum Ausdrucken und neben das Tablet legen</p></div>'+
       '<button class="btn btn-sm btn-primary" data-act="print-anleitung">'+icon('printer')+'Drucken</button></div>'+
     '<div class="card pad">'+anleitungInhalt()+'</div>'+
+  '</div>';
+}
+
+var kinderImport = { zeilen:null, datei:'', kopfzeile:true, spalteName:0, spalteKennung:-1, spalteGruppe:-1,
+                     ziel:'neu', neueGruppe:'', fehler:null };
+
+function importSpaltenRaten(){
+  const k = kinderImport;
+  if (!k.zeilen || !k.zeilen.length) return;
+  const kopf = k.zeilen[0].map(z => String(z||'').toLowerCase());
+  const finde = (...begriffe) => kopf.findIndex(z => begriffe.some(b => z.includes(b)));
+  const n = finde('vorname','name','kind');
+  const ken = finde('kennung','id','nummer');
+  const gr = finde('gruppe');
+  k.kopfzeile = n >= 0 || ken >= 0 || gr >= 0;
+  k.spalteName = n >= 0 ? n : 0;
+  k.spalteKennung = ken;
+  k.spalteGruppe = gr;
+  if (gr >= 0) k.ziel = 'datei';
+}
+
+/* Was aus der Datei wird: neu, schon vorhanden, oder unbrauchbar */
+function importAnalyse(){
+  const k = kinderImport;
+  const out = { neu:[], vorhanden:[], fehler:[], gruppenNeu:[] };
+  if (!k.zeilen) return out;
+  const zeilen = k.zeilen.slice(k.kopfzeile ? 1 : 0);
+  zeilen.forEach(z => {
+    const name = String(z[k.spalteName] || '').trim();
+    if (!name){ out.fehler.push('Zeile ohne Namen übersprungen'); return; }
+    const kennung = k.spalteKennung >= 0 ? String(z[k.spalteKennung] || '').trim() : '';
+    let gruppenName;
+    if (k.ziel === 'datei' && k.spalteGruppe >= 0) gruppenName = String(z[k.spalteGruppe] || '').trim();
+    else if (k.ziel === 'neu') gruppenName = k.neueGruppe.trim();
+    else gruppenName = groupName(k.ziel);
+    if (!gruppenName){ out.fehler.push('„'+name+'": keine Gruppe angegeben'); return; }
+    const g = S.groups.filter(x => x.name.toLowerCase() === gruppenName.toLowerCase())[0];
+    if (!g && out.gruppenNeu.indexOf(gruppenName) < 0) out.gruppenNeu.push(gruppenName);
+    const schon = kennung
+      ? S.children.filter(x => !istGruppenkonto(x) && x.importKey === kennung)[0]
+      : S.children.filter(x => !istGruppenkonto(x) && x.name === name && g && x.groupId === g.id)[0];
+    if (schon) out.vorhanden.push({ name, gruppe:gruppenName, grund: kennung ? 'Kennung schon vergeben' : 'Name in dieser Gruppe schon vorhanden' });
+    else out.neu.push({ name, kennung, gruppe:gruppenName });
+  });
+  return out;
+}
+
+function importUebernehmen(){
+  const a = importAnalyse();
+  a.gruppenNeu.forEach(name => {
+    if (!S.groups.filter(g => g.name.toLowerCase() === name.toLowerCase())[0]){
+      S.groups.push({ id: uid('g'), name });
+      logAction('Gruppe „'+name+'" beim Einlesen angelegt');
+    }
+  });
+  const angelegt = [];
+  a.neu.forEach(n => {
+    const g = S.groups.filter(x => x.name.toLowerCase() === n.gruppe.toLowerCase())[0];
+    const kind = { id: uid('k'), name: n.name, groupId: g.id, active: true,
+                   token: newToken('K'), importKey: n.kennung || null, familyId: null };
+    if (karteEinstellungen().feld === 'symbol') { S.children.push(kind); zeichenFuer(kind); }
+    else S.children.push(kind);
+    angelegt.push(kind);
+  });
+  logAction('Kinderliste eingelesen: '+angelegt.length+' Kinder, '+a.gruppenNeu.length+' neue Gruppen');
+  save();
+  kinderImport = { zeilen:null, datei:'', kopfzeile:true, spalteName:0, spalteKennung:-1, spalteGruppe:-1,
+                   ziel:'neu', neueGruppe:'', fehler:null };
+  go('cards');
+  toast(angelegt.length+' Kinder angelegt – jetzt die Bibliothekskarten drucken.');
+}
+
+function screenKinderImport(){
+  const k = kinderImport;
+  const spaltenWahl = (name, wert, mitLeer) => {
+    const anzahl = k.zeilen ? Math.max.apply(null, k.zeilen.map(z => z.length)) : 0;
+    let opt = mitLeer ? '<option value="-1"'+(wert<0?' selected':'')+'>— nicht vorhanden —</option>' : '';
+    for (let i = 0; i < anzahl; i++){
+      const titel = k.kopfzeile && k.zeilen[0][i] ? k.zeilen[0][i] : 'Spalte '+String.fromCharCode(65+i);
+      opt += '<option value="'+i+'"'+(wert===i?' selected':'')+'>'+esc(titel)+'</option>';
+    }
+    return '<select class="pill" data-import-spalte="'+name+'">'+opt+'</select>';
+  };
+
+  if (!k.zeilen){
+    return '<div class="stack">'+backTo('more','Mehr')+
+      '<div><h1 class="screen-title">Kinder einlesen</h1>'+
+      '<p class="screen-sub">Eine Excel- oder CSV-Datei mit Vornamen – für eine neue Gruppe oder als Zugang</p></div>'+
+      (k.fehler ? flashMsg('err', k.fehler) : '')+
+      '<div class="card pad stack">'+
+        '<label class="btn btn-primary" style="align-self:flex-start;cursor:pointer">'+icon('plus')+'Datei auswählen'+
+          '<input type="file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" '+
+          'data-kinder-datei style="display:none"></label>'+
+        '<p class="hint">Excel-Dateien (.xlsx) werden direkt gelesen – Umweg über CSV nicht nötig. '+
+        'Eine Spalte mit dem Vornamen genügt; Gruppe und eine eigene Kennung dürfen dabei sein. '+
+        'Eine Kopfzeile wird erkannt.</p>'+
+      '</div>'+
+      '<div class="notice calm">'+icon('info')+'<span><span class="n-title">Unterschied zum Jahreswechsel</span>'+
+        '<span class="n-body">Hier wird nur hinzugefügt. Wer nicht in der Datei steht, bleibt unangetastet. '+
+        'Der Jahreswechsel-Assistent dagegen gleicht den gesamten Bestand ab und deaktiviert Ausgeschiedene.</span></span></div>'+
+    '</div>';
+  }
+
+  const a = importAnalyse();
+  return '<div class="stack">'+backTo('more','Mehr')+
+    '<div class="head-row"><div><h1 class="screen-title">Kinder einlesen</h1>'+
+      '<p class="screen-sub">'+esc(k.datei)+' · '+plural(k.zeilen.length,'Zeile','Zeilen')+'</p></div>'+
+      '<button class="btn btn-sm" data-act="import-verwerfen">Andere Datei</button></div>'+
+    '<div class="card pad stack">'+
+      '<div class="grid-2">'+
+        '<div class="field"><label>Spalte mit dem Vornamen</label>'+spaltenWahl('spalteName', k.spalteName, false)+'</div>'+
+        '<div class="field"><label>Spalte mit einer eigenen Kennung</label>'+spaltenWahl('spalteKennung', k.spalteKennung, true)+'</div>'+
+      '</div>'+
+      '<div class="field"><label>Erste Zeile</label>'+
+        '<button class="toggle" data-act="import-kopfzeile" aria-pressed="'+(k.kopfzeile?'true':'false')+'" style="align-self:flex-start">'+
+        (k.kopfzeile ? 'ist eine Überschrift' : 'enthält schon ein Kind')+'</button></div>'+
+      '<div class="field"><label>In welche Gruppe?</label>'+
+        '<div class="toggle-row">'+
+          (k.spalteGruppe >= 0 ? '<button class="toggle" data-import-ziel="datei" aria-pressed="'+(k.ziel==='datei'?'true':'false')+'">Aus der Datei</button>' : '')+
+          '<button class="toggle" data-import-ziel="neu" aria-pressed="'+(k.ziel==='neu'?'true':'false')+'">Neue Gruppe</button>'+
+          S.groups.map(g => '<button class="toggle" data-import-ziel="'+g.id+'" aria-pressed="'+(k.ziel===g.id?'true':'false')+'">'+esc(g.name)+'</button>').join('')+
+        '</div>'+
+        (k.ziel === 'neu' ? '<input id="neueGruppeFeld" data-import-gruppe placeholder="Name der neuen Gruppe" value="'+esc(k.neueGruppe)+'" '+
+          'style="margin-top:10px;padding:13px 16px;border-radius:var(--r-s);border:1px solid var(--line-strong);background:var(--card);width:100%">' : '')+
+      '</div>'+
+    '</div>'+
+    '<div class="stats">'+
+      '<div class="stat"><div class="v num">'+a.neu.length+'</div><div class="k">werden angelegt</div></div>'+
+      '<div class="stat"><div class="v num">'+a.vorhanden.length+'</div><div class="k">schon vorhanden</div></div>'+
+      '<div class="stat'+(a.fehler.length?' warn':'')+'"><div class="v num">'+a.fehler.length+'</div><div class="k">übersprungen</div></div>'+
+    '</div>'+
+    (a.gruppenNeu.length ? '<div class="notice todo">'+icon('users')+'<span><span class="n-title">'+
+      plural(a.gruppenNeu.length,'Gruppe wird','Gruppen werden')+' neu angelegt</span>'+
+      '<span class="n-body">'+esc(a.gruppenNeu.join(', '))+'</span></span></div>' : '')+
+    (a.fehler.length ? '<div class="notice todo">'+icon('alert')+'<span><span class="n-title">Übersprungen</span>'+
+      '<span class="n-body">'+esc(a.fehler.slice(0,4).join(' · '))+'</span></span></div>' : '')+
+    (a.neu.length ? '<div class="section"><span class="eyebrow">Werden angelegt</span><div class="list">'+
+      a.neu.map(n => '<div class="row"><span class="stripe available"></span>'+
+        '<span class="r-main"><span class="r-title">'+esc(n.name)+'</span>'+
+        '<span class="r-sub">'+esc(n.gruppe)+(n.kennung ? ' · '+esc(n.kennung) : '')+'</span></span>'+
+        '<span class="r-side"><span class="chip ok">'+icon('plus')+'neu</span></span></div>').join('')+'</div></div>' : '')+
+    (a.vorhanden.length ? '<div class="section"><span class="eyebrow">Schon vorhanden – wird übersprungen</span><div class="list">'+
+      a.vorhanden.map(n => '<div class="row"><span class="stripe retired"></span>'+
+        '<span class="r-main"><span class="r-title">'+esc(n.name)+'</span>'+
+        '<span class="r-sub">'+esc(n.gruppe)+' · '+esc(n.grund)+'</span></span></div>').join('')+'</div></div>' : '')+
+    '<div class="btn-row"><button class="btn" data-act="import-verwerfen">Abbrechen</button>'+
+      '<button class="btn btn-primary" style="flex:1" data-act="import-uebernehmen"'+(a.neu.length?'':' disabled')+'>'+
+      icon('check')+plural(a.neu.length,'Kind','Kinder')+' anlegen</button></div>'+
   '</div>';
 }
 
@@ -3638,7 +3787,7 @@ function etikettZelle(c, format){
    Drei Wege in den eigenen Bestand: ISBN-Liste (Daten kommen von der DNB),
    Tabelle fuer Buecher ohne ISBN, und eine vollstaendige Sicherung.
    ======================================================================== */
-var FASSUNG = '28.08.2026 · 8';
+var FASSUNG = '28.08.2026 · 9';
 var bestand = { isbnText:'', isbnLauf:null, isbnErgebnis:null, tabText:'', tabErgebnis:null, sicherung:null };
 
 function isbnListeLesen(text){
@@ -3855,12 +4004,132 @@ document.addEventListener('visibilitychange', function () {
 });
 </script>
 <script>
+/* ================================================== Tabellen einlesen =====
+   Excel-Dateien sind ZIP-Archive mit XML darin. Moderne Browser koennen mit
+   DecompressionStream entpacken – damit geht das ohne Fremdbibliothek und
+   ohne den Umweg ueber CSV, der bei deutschem Excel regelmaessig an
+   Semikolon und Zeichensatz scheitert.
+   ======================================================================== */
+var Tabelle = {
+  xlsxMoeglich: function(){ return typeof DecompressionStream === 'function'; },
+
+  zipEintraege: function (buf) {
+    var dv = new DataView(buf), eocd = -1, i;
+    for (i = buf.byteLength - 22; i >= 0 && i > buf.byteLength - 65558; i--) {
+      if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+    }
+    if (eocd < 0) throw new Error('Das ist keine Excel-Datei.');
+    var anzahl = dv.getUint16(eocd + 10, true), off = dv.getUint32(eocd + 16, true);
+    var eintraege = {}, dec = new TextDecoder();
+    for (var n = 0; n < anzahl; n++) {
+      if (dv.getUint32(off, true) !== 0x02014b50) break;
+      var methode = dv.getUint16(off + 10, true);
+      var groesse = dv.getUint32(off + 20, true);
+      var nameLen = dv.getUint16(off + 28, true);
+      var extraLen = dv.getUint16(off + 30, true);
+      var kommLen = dv.getUint16(off + 32, true);
+      var lokal = dv.getUint32(off + 42, true);
+      var name = dec.decode(new Uint8Array(buf, off + 46, nameLen));
+      eintraege[name] = { methode: methode, groesse: groesse, lokal: lokal };
+      off += 46 + nameLen + extraLen + kommLen;
+    }
+    return eintraege;
+  },
+
+  zipLesen: function (buf, eintrag) {
+    var dv = new DataView(buf), off = eintrag.lokal;
+    if (dv.getUint32(off, true) !== 0x04034b50) throw new Error('Beschädigte Excel-Datei.');
+    var start = off + 30 + dv.getUint16(off + 26, true) + dv.getUint16(off + 28, true);
+    var daten = new Uint8Array(buf, start, eintrag.groesse);
+    if (eintrag.methode === 0) return Promise.resolve(new TextDecoder().decode(daten));
+    var strom = new Blob([daten]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+    return new Response(strom).text();
+  },
+
+  spalte: function (ref) {
+    var m = /^([A-Z]+)/.exec(ref || '');
+    if (!m) return 0;
+    var n = 0;
+    for (var i = 0; i < m[1].length; i++) n = n * 26 + (m[1].charCodeAt(i) - 64);
+    return n - 1;
+  },
+
+  ausXlsx: function (buf) {
+    var self = this, e;
+    try { e = this.zipEintraege(buf); }
+    catch (err) { return Promise.reject(err); }
+    var blattName = Object.keys(e).filter(function (n) { return /^xl\/worksheets\/sheet1\.xml$/.test(n); })[0]
+                 || Object.keys(e).filter(function (n) { return /^xl\/worksheets\/.+\.xml$/.test(n); })[0];
+    if (!blattName) return Promise.reject(new Error('In der Datei ist kein Tabellenblatt zu finden.'));
+    var texte = [];
+    var vorlauf = e['xl/sharedStrings.xml']
+      ? this.zipLesen(buf, e['xl/sharedStrings.xml']).then(function (xml) {
+          var doc = new DOMParser().parseFromString(xml, 'application/xml');
+          var si = doc.getElementsByTagNameNS('*', 'si');
+          for (var i = 0; i < si.length; i++) {
+            var t = si[i].getElementsByTagNameNS('*', 't'), teil = '';
+            for (var j = 0; j < t.length; j++) teil += t[j].textContent;
+            texte.push(teil);
+          }
+        })
+      : Promise.resolve();
+    return vorlauf.then(function () { return self.zipLesen(buf, e[blattName]); })
+      .then(function (xml) {
+        var doc = new DOMParser().parseFromString(xml, 'application/xml');
+        var rows = doc.getElementsByTagNameNS('*', 'row'), zeilen = [];
+        for (var r = 0; r < rows.length; r++) {
+          var cs = rows[r].getElementsByTagNameNS('*', 'c'), zeile = [];
+          for (var i = 0; i < cs.length; i++) {
+            var c = cs[i], typ = c.getAttribute('t'), wert = '';
+            if (typ === 'inlineStr') {
+              var it = c.getElementsByTagNameNS('*', 't');
+              for (var j = 0; j < it.length; j++) wert += it[j].textContent;
+            } else {
+              var v = c.getElementsByTagNameNS('*', 'v')[0];
+              wert = v ? v.textContent : '';
+              if (typ === 's') wert = texte[+wert] || '';
+            }
+            zeile[self.spalte(c.getAttribute('r'))] = wert;
+          }
+          zeilen.push(zeile);
+        }
+        return zeilen;
+      });
+  },
+
+  /* CSV: deutsches Excel schreibt Semikolon und oft Windows-1252 */
+  ausCsv: function (buf) {
+    var text = new TextDecoder('utf-8').decode(buf);
+    if (text.indexOf('\uFFFD') >= 0) {
+      try { text = new TextDecoder('windows-1252').decode(buf); } catch (e) {}
+    }
+    var trenner = (text.split(';').length > text.split(',').length) ? ';' : ',';
+    return text.split(/\r?\n/).filter(function (z) { return z.trim(); })
+      .map(function (z) { return z.split(trenner).map(function (t) { return t.trim().replace(/^"|"$/g, ''); }); });
+  },
+
+  ausDatei: function (datei) {
+    var self = this;
+    return datei.arrayBuffer().then(function (buf) {
+      var kopf = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
+      var istZip = kopf[0] === 0x50 && kopf[1] === 0x4b;                 // "PK"
+      if (istZip) {
+        if (!self.xlsxMoeglich())
+          throw new Error('Dieser Browser kann keine Excel-Dateien entpacken. Bitte in Excel als CSV speichern.');
+        return self.ausXlsx(buf);
+      }
+      return self.ausCsv(buf);
+    });
+  }
+};
+</script>
+<script>
 /* ============================================================ Rendering */
 const SCREENS = {
   start:screenStart, library:screenLibrary, book:screenBook, scan:screenScan,
   children:screenChildren, child:screenChild, overdue:screenOverdue, more:screenMore,
   settings:screenSettings, groups:screenGroups, cards:screenCards, labels:screenLabels,
-  rollover:screenRollover, bestand:screenBestand, stats:screenStats, anleitung:screenAnleitung, log:screenLog, privacy:screenPrivacy
+  rollover:screenRollover, bestand:screenBestand, stats:screenStats, anleitung:screenAnleitung, kinderimport:screenKinderImport, log:screenLog, privacy:screenPrivacy
 };
 function withFocus(fn){
   const el = document.activeElement;
@@ -4160,6 +4429,20 @@ const ACTIONS = {
   'tab-uebernehmen': () => tabelleUebernehmen(),
   'tab-verwerfen': () => { bestand.tabErgebnis = null; render(); },
   'fassung-laden': () => neueFassungLaden(),
+  'import-verwerfen': () => {
+    kinderImport = { zeilen:null, datei:'', kopfzeile:true, spalteName:0, spalteKennung:-1, spalteGruppe:-1,
+                     ziel:'neu', neueGruppe:'', fehler:null };
+    render();
+  },
+  'import-kopfzeile': () => { kinderImport.kopfzeile = !kinderImport.kopfzeile; render(); },
+  'import-uebernehmen': () => {
+    const a = importAnalyse();
+    askConfirm({ title:'Kinder anlegen',
+      body: a.neu.length+' Kinder werden angelegt'+
+        (a.gruppenNeu.length ? ', dazu '+plural(a.gruppenNeu.length,'neue Gruppe','neue Gruppen')+' ('+a.gruppenNeu.join(', ')+')' : '')+
+        '. Bestehende Konten bleiben unverändert.',
+      ok:'Anlegen' }, () => importUebernehmen());
+  },
   'sicherung-oeffnen': () => openSicherung(),
   'sicherung-datei': () => {
     if (!dateiSpeichernMoeglich()){
@@ -4229,7 +4512,7 @@ document.addEventListener('click', ev => {
     '[data-label-copy],[data-add-copy],[data-draft-cat],[data-backdrop],[data-dlg-backdrop],'+
     '[data-dlg-wahl],[data-copy-status],[data-anonymisieren],[data-rolle],[data-pick-copy],[data-pick-return],'+
     '[data-karte],[data-kartenfeld],[data-zeichen-aendern],[data-zeichen-waehlen],[data-etikett-filter],'+
-    '[data-gruppenkonto],[data-gruppenkonto-weg]');
+    '[data-gruppenkonto],[data-gruppenkonto-weg],[data-import-ziel]');
   if (!el) return;
   const d = el.dataset;
 
@@ -4256,6 +4539,12 @@ document.addEventListener('click', ev => {
     e.feld = d.kartenfeld;
     if (e.feld === 'symbol') S.children.forEach(k => { if (k.active) zeichenFuer(k); });
     save(); render();
+    return;
+  }
+  if (d.importZiel){
+    kinderImport.ziel = d.importZiel;
+    render();
+    if (d.importZiel === 'neu') setTimeout(() => { const f = document.getElementById('neueGruppeFeld'); if (f) f.focus(); }, 50);
     return;
   }
   if (d.gruppenkonto){
@@ -4488,6 +4777,7 @@ document.addEventListener('input', ev => {
   if (d.draft && flow && flow.draft){ flow.draft[d.draft] = el.value; return; }
   if (d.druckOff){ const e = druckEinstellungen(); e[d.druckOff] = parseFloat(el.value) || 0; save(); return; }
   if (d.bestand){ bestand[d.bestand] = el.value; return; }
+  if (el.hasAttribute && el.hasAttribute('data-import-gruppe')){ kinderImport.neueGruppe = el.value; return; }
   if (d.set){
     const v = el.value;
     if (d.set === 'name') S.org.name = v || 'Einrichtung';
@@ -4500,6 +4790,28 @@ document.addEventListener('input', ev => {
 });
 document.addEventListener('change', ev => {
   const el = ev.target, d = el.dataset;
+  if (el.hasAttribute && el.hasAttribute('data-kinder-datei')){
+    const datei = el.files && el.files[0];
+    if (!datei) return;
+    kinderImport.fehler = null;
+    Tabelle.ausDatei(datei).then(zeilen => {
+      if (!zeilen.length) throw new Error('Die Datei enthält keine Zeilen.');
+      kinderImport.zeilen = zeilen;
+      kinderImport.datei = datei.name;
+      importSpaltenRaten();
+      render();
+    }).catch(e => {
+      kinderImport.zeilen = null;
+      kinderImport.fehler = e.message || 'Die Datei ließ sich nicht lesen.';
+      render();
+    });
+    return;
+  }
+  if (d.importSpalte){
+    kinderImport[d.importSpalte] = parseInt(el.value, 10);
+    render();
+    return;
+  }
   if (el.id === 'libAge'){ lib.age = el.value; render(); return; }
   if (d.druckFormat){
     const e = druckEinstellungen();
