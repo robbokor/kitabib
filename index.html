@@ -1724,7 +1724,47 @@ function isbnCheck(twelve){
 function isbn13(twelve){ const full = twelve + isbnCheck(twelve); return full.replace(/^(\d{3})(\d)(\d{3})(\d{5})(\d)$/, '$1-$2-$3-$4-$5'); }
 
 /* -------------------------------------------------------- Paedagogische Kategorien */
-const CATS = ['Gefühle','Freundschaft','Familie','Natur','Tiere','Eingewöhnung','Tod und Trauer','Diversität','Sprache','Schule'];
+/* Vorschlag aus dem Konzept, Kapitel 5.3 – ab hier frei aenderbar durch die
+   Einrichtung. Jede Kita hat eigene Schwerpunkte. */
+const KATEGORIEN_VORGABE = ['Gefühle','Freundschaft','Familie','Natur','Tiere','Eingewöhnung','Tod und Trauer','Diversität','Sprache','Schule'];
+function kategorien(){
+  if (!S.categories || !S.categories.length) S.categories = KATEGORIEN_VORGABE.slice();
+  return S.categories;
+}
+function kategorieBenutzt(name){ return S.titles.filter(t => (t.cats||[]).indexOf(name) >= 0).length; }
+function kategorieHinzufuegen(name){
+  const rein = String(name||'').trim();
+  if (!rein) return 'Bitte einen Namen eingeben.';
+  if (kategorien().some(c => c.toLowerCase() === rein.toLowerCase())) return 'Diese Kategorie gibt es schon.';
+  kategorien().push(rein);
+  logAction('Kategorie „'+rein+'" angelegt');
+  save();
+  return null;
+}
+function kategorieUmbenennen(alt, neu){
+  const rein = String(neu||'').trim();
+  if (!rein) return 'Bitte einen Namen eingeben.';
+  if (rein !== alt && kategorien().some(c => c.toLowerCase() === rein.toLowerCase())) return 'Diese Kategorie gibt es schon.';
+  const i = kategorien().indexOf(alt);
+  if (i < 0) return 'Kategorie nicht gefunden.';
+  kategorien()[i] = rein;
+  /* Umbenennen heisst umbenennen – die Buecher behalten ihr Schlagwort */
+  S.titles.forEach(t => {
+    const j = (t.cats||[]).indexOf(alt);
+    if (j >= 0) t.cats[j] = rein;
+  });
+  if (lib.cat === alt) lib.cat = rein;
+  logAction('Kategorie „'+alt+'" umbenannt in „'+rein+'"');
+  save();
+  return null;
+}
+function kategorieLoeschen(name){
+  S.categories = kategorien().filter(c => c !== name);
+  S.titles.forEach(t => { if (t.cats) t.cats = t.cats.filter(c => c !== name); });
+  if (lib.cat === name) lib.cat = '';
+  logAction('Kategorie „'+name+'" entfernt');
+  save();
+}
 
 /* Coverfarben: acht Pastelltöne mit passender dunkler Schrift.
    [Fläche, Form, Schrift] – kuratiert, damit das Raster ruhig zusammenwirkt. */
@@ -1783,7 +1823,7 @@ function buildSeed(){
     const id = 't'+(i+1);
     titles.push({
       id, title:t[0], author:t[1], illustrator:t[2], publisher:t[3], year:t[4],
-      ageMin:t[5], ageMax:t[6], cats:t[7], blurb:t[8], isbn:isbn13('9783'+t[9].slice(0,8)),
+      ageMin:t[5], ageMax:t[6], cats:t[7].slice(), blurb:t[8], isbn:isbn13('9783'+t[9].slice(0,8)),
       lang:'Deutsch', coverIdx:i % COVER_PALETTE.length
     });
     for (let c=0;c<SEED_COPIES[i];c++){
@@ -1814,7 +1854,7 @@ function buildSeed(){
     const start = addDays(t, off);
     loans.push({ id:'lh'+(i+1), copyId:copy.id, childId, start, due:addDays(start,org.loanDays), returnedAt:addDays(start,10) });
   });
-  return { org, groups, children, titles, copies, loans, log:[
+  return { org, groups, children, titles, copies, categories: KATEGORIEN_VORGABE.slice(), loans, log:[
     { ts:addDays(t,-3)+' 08:42', text:'Bibliothekskarte für Malik neu erzeugt (Karte verloren)' },
     { ts:addDays(t,-9)+' 15:10', text:'Gruppe „Regenbogen" angelegt' }
   ]};
@@ -1986,7 +2026,7 @@ const NAV = [
   { id:'more',     label:'Mehr',       icon:'more' }
 ];
 const PARENT = { book:'library', child:'children', overdue:'start', settings:'more', groups:'more',
-                 labels:'more', cards:'more', rollover:'more', bestand:'more', stats:'more', anleitung:'more', kinderimport:'more', log:'more', privacy:'more' };
+                 labels:'more', cards:'more', rollover:'more', bestand:'more', stats:'more', anleitung:'more', kinderimport:'more', kategorien:'more', log:'more', privacy:'more' };
 let route = { name:'start', id:null };
 
 function go(name, id){
@@ -2456,7 +2496,7 @@ function addBody(){
       '<div class="field"><label for="f_blurb">Kurzbeschreibung</label>'+
         '<textarea id="f_blurb" data-draft="blurb" style="min-height:70px">'+esc(d.blurb)+'</textarea></div>'+
       '<div class="field"><label>Pädagogische Schlagwörter</label><div class="toggle-row">'+
-        CATS.map(c => '<button class="toggle" data-draft-cat="'+esc(c)+'" aria-pressed="'+(d.cats.includes(c)?'true':'false')+'">'+esc(c)+'</button>').join('')+
+        kategorien().map(c => '<button class="toggle" data-draft-cat="'+esc(c)+'" aria-pressed="'+(d.cats.includes(c)?'true':'false')+'">'+esc(c)+'</button>').join('')+
       '</div></div>';
   }
   if (flow.step === 'done'){
@@ -2589,7 +2629,7 @@ function screenLibrary(){
       '<button class="toggle" data-act="toggle-avail" aria-pressed="'+(lib.avail?'true':'false')+'">Nur verfügbare</button>'+
     '</div>'+
     '<div class="toggle-row"><button class="toggle" data-cat="" aria-pressed="'+(lib.cat?'false':'true')+'">Alle Themen</button>'+
-      CATS.map(c=>'<button class="toggle" data-cat="'+esc(c)+'" aria-pressed="'+(lib.cat===c?'true':'false')+'">'+esc(c)+'</button>').join('')+'</div>'+
+      kategorien().map(c=>'<button class="toggle" data-cat="'+esc(c)+'" aria-pressed="'+(lib.cat===c?'true':'false')+'">'+esc(c)+'</button>').join('')+'</div>'+
     (list.length ? '<div class="grid-books">'+list.map(t => {
         const av = availableCopies(t.id).length, total = copiesOfTitle(t.id).length;
         const flag = '<span class="c-flag'+(av?'':' none')+'">'+(av? av+'/'+total+' frei' : 'alle aus')+'</span>';
@@ -2827,6 +2867,7 @@ function screenMore(){
   const items = [
     ['settings','Einstellungen','Ausleihdauer, Grenzen, Einrichtungsname','more', true],
     ['groups','Gruppen','Anlegen, umbenennen','users', true],
+    ['kategorien','Kategorien','Pädagogische Schlagwörter pflegen','label', true],
     ['cards','Bibliothekskarten','Karten für Gruppen drucken','card', false],
     ['labels','QR-Etiketten','Etiketten für Exemplare drucken','label', false],
     ['kinderimport','Kinder einlesen','Excel- oder CSV-Liste, auch in eine neue Gruppe','users', true],
@@ -3126,7 +3167,7 @@ function screenBestand(){
     tabBlock = '<div class="stack">'+
       '<div class="field"><label for="tabListe">Titel;Autor/in;Alter von;Alter bis;Themen;Exemplare</label>'+
         '<textarea id="tabListe" data-bestand="tabText" spellcheck="false" placeholder="Unser Kita-Liederbuch;Team Sonnenblume;3;6;Sprache;2">'+esc(bestand.tabText)+'</textarea>'+
-        '<p class="hint">Für Bücher ohne ISBN. Erlaubte Themen: '+esc(CATS.join(', '))+'.</p></div>'+
+        '<p class="hint">Für Bücher ohne ISBN. Erlaubte Themen: '+esc(kategorien().join(', '))+'.</p></div>'+
       '<button class="btn" data-act="tab-pruefen">'+icon('eye')+'Nur prüfen</button></div>';
   }
 
@@ -3158,7 +3199,7 @@ function screenStats(){
     .filter(x => x.t).sort((a,b) => b.n - a.n).slice(0, 8);
   const hoechst = top.length ? top[0].n : 1;
 
-  const themen = CATS.map(c => ({ name:c, n: S.titles.filter(t => t.cats.includes(c)).length }))
+  const themen = kategorien().map(c => ({ name:c, n: S.titles.filter(t => t.cats.includes(c)).length }))
     .filter(x => x.n).sort((a,b) => b.n - a.n);
   const themenMax = themen.length ? themen[0].n : 1;
 
@@ -3403,6 +3444,33 @@ function screenKinderImport(){
     '<div class="btn-row"><button class="btn" data-act="import-verwerfen">Abbrechen</button>'+
       '<button class="btn btn-primary" style="flex:1" data-act="import-uebernehmen"'+(a.neu.length?'':' disabled')+'>'+
       icon('check')+plural(a.neu.length,'Kind','Kinder')+' anlegen</button></div>'+
+  '</div>';
+}
+
+function screenKategorien(){
+  const liste = kategorien();
+  const unbenutzt = liste.filter(c => !kategorieBenutzt(c)).length;
+  return '<div class="stack">'+backTo('more','Mehr')+
+    '<div class="head-row"><div><h1 class="screen-title">Kategorien</h1>'+
+      '<p class="screen-sub">'+plural(liste.length,'Schlagwort','Schlagwörter')+' für die pädagogische Suche'+
+      (unbenutzt ? ' · '+unbenutzt+' noch ungenutzt' : '')+'</p></div>'+
+      '<button class="btn btn-sm" data-act="kategorie-neu">'+icon('plus')+'Kategorie anlegen</button></div>'+
+    '<div class="list">'+liste.map(c => {
+      const n = kategorieBenutzt(c);
+      return '<div class="row"><span class="stripe '+(n?'available':'retired')+'"></span>'+
+        '<span class="r-main"><span class="r-title">'+esc(c)+'</span>'+
+        '<span class="r-sub">'+(n ? 'bei '+plural(n,'Buch','Büchern') : 'noch bei keinem Buch')+'</span></span>'+
+        '<span class="r-side">'+
+          '<button class="btn btn-sm" data-kat-umbenennen="'+esc(c)+'">Umbenennen</button>'+
+          '<button class="btn btn-sm btn-danger" data-kat-loeschen="'+esc(c)+'">'+icon('trash')+'</button>'+
+        '</span></div>';
+    }).join('')+'</div>'+
+    '<div class="notice calm">'+icon('info')+'<span><span class="n-title">Umbenennen ist sicher</span>'+
+      '<span class="n-body">Beim Umbenennen wandert das Schlagwort in allen Büchern mit – nichts geht verloren. '+
+      'Beim Entfernen wird es aus den Büchern gelöscht; die Bücher selbst bleiben unangetastet.</span></span></div>'+
+    '<div class="notice calm">'+icon('shield')+'<span><span class="n-title">Vorschlag aus dem Konzept</span>'+
+      '<span class="n-body">Die zehn Schlagwörter aus Kapitel 5.3 sind ein Vorschlag, keine Vorgabe. '+
+      'Ergänzt, was ihr wirklich sucht – Bewegung, Musik, Religion, Mehrsprachigkeit, Jahreszeiten.</span></span></div>'+
   '</div>';
 }
 
@@ -3885,7 +3953,7 @@ function etikettZelle(c, format){
    Drei Wege in den eigenen Bestand: ISBN-Liste (Daten kommen von der DNB),
    Tabelle fuer Buecher ohne ISBN, und eine vollstaendige Sicherung.
    ======================================================================== */
-var FASSUNG = '31.08.2026 · 11';
+var FASSUNG = '31.08.2026 · 12';
 var bestand = { isbnText:'', isbnLauf:null, isbnErgebnis:null, tabText:'', tabErgebnis:null, sicherung:null };
 
 function isbnListeLesen(text){
@@ -3958,9 +4026,9 @@ function tabelleLesen(text){
     var p = zeile.split(';').map(function (t){ return t.trim(); });
     if (!p[0]){ out.fehler.push({ zeile: zeile, grund:'Titel fehlt' }); return; }
     var themen = (p[4]||'').split(/[,\/]/).map(function (t){ return t.trim(); })
-                  .filter(function (t){ return CATS.indexOf(t) >= 0; });
+                  .filter(function (t){ return kategorien().indexOf(t) >= 0; });
     var unbekannt = (p[4]||'').split(/[,\/]/).map(function (t){ return t.trim(); })
-                  .filter(function (t){ return t && CATS.indexOf(t) < 0; });
+                  .filter(function (t){ return t && kategorien().indexOf(t) < 0; });
     out.neu.push({ titel:p[0], autor:p[1]||'Unbekannt', von:parseInt(p[2],10)||3, bis:parseInt(p[3],10)||6,
                    themen:themen, unbekannteThemen:unbekannt, exemplare:Math.max(1, parseInt(p[5],10)||1) });
   });
@@ -4227,7 +4295,7 @@ const SCREENS = {
   start:screenStart, library:screenLibrary, book:screenBook, scan:screenScan,
   children:screenChildren, child:screenChild, overdue:screenOverdue, more:screenMore,
   settings:screenSettings, groups:screenGroups, cards:screenCards, labels:screenLabels,
-  rollover:screenRollover, bestand:screenBestand, stats:screenStats, anleitung:screenAnleitung, kinderimport:screenKinderImport, log:screenLog, privacy:screenPrivacy
+  rollover:screenRollover, bestand:screenBestand, stats:screenStats, anleitung:screenAnleitung, kinderimport:screenKinderImport, kategorien:screenKategorien, log:screenLog, privacy:screenPrivacy
 };
 function withFocus(fn){
   const el = document.activeElement;
@@ -4588,6 +4656,12 @@ const ACTIONS = {
       toast('Sicherung eingespielt.');
     });
   },
+  'kategorie-neu': () => askText({ title:'Kategorie anlegen', label:'Name des Schlagworts', ok:'Anlegen' }, name => {
+    const fehler = kategorieHinzufuegen(name);
+    if (fehler){ toast(fehler); return; }
+    render();
+    toast('„'+name.trim()+'" steht jetzt bei jedem Buch zur Auswahl.');
+  }),
   'pruefbogen': () => { doPrint(pruefBogen(etikettFormat())); druckHinweis(); },
   'rahmen-umschalten': () => { const d = druckEinstellungen(); d.rahmen = !d.rahmen; save(); render(); },
   'print-anleitung': () => { doPrint('<div class="druckseite anl-seite">'+anleitungInhalt()+'</div>'); },
@@ -4611,7 +4685,7 @@ document.addEventListener('click', ev => {
     '[data-label-copy],[data-add-copy],[data-draft-cat],[data-backdrop],[data-dlg-backdrop],'+
     '[data-dlg-wahl],[data-copy-status],[data-anonymisieren],[data-rolle],[data-pick-copy],[data-pick-return],'+
     '[data-karte],[data-kartenfeld],[data-zeichen-aendern],[data-zeichen-waehlen],[data-etikett-filter],'+
-    '[data-gruppenkonto],[data-gruppenkonto-weg],[data-import-ziel]');
+    '[data-gruppenkonto],[data-gruppenkonto-weg],[data-import-ziel],[data-kat-umbenennen],[data-kat-loeschen]');
   if (!el) return;
   const d = el.dataset;
 
@@ -4638,6 +4712,29 @@ document.addEventListener('click', ev => {
     e.feld = d.kartenfeld;
     if (e.feld === 'symbol') S.children.forEach(k => { if (k.active) zeichenFuer(k); });
     save(); render();
+    return;
+  }
+  if (d.katUmbenennen){
+    const alt = d.katUmbenennen;
+    askText({ title:'Kategorie umbenennen', label:'Neuer Name', value:alt, ok:'Umbenennen' }, neu => {
+      const fehler = kategorieUmbenennen(alt, neu);
+      if (fehler){ toast(fehler); return; }
+      render();
+      toast('Umbenannt – die Bücher behalten das Schlagwort.');
+    });
+    return;
+  }
+  if (d.katLoeschen){
+    const name = d.katLoeschen;
+    const n = kategorieBenutzt(name);
+    askConfirm({ title:'Kategorie entfernen',
+      body: n ? '„'+name+'" wird bei '+plural(n,'Buch','Büchern')+' entfernt. Die Bücher selbst bleiben erhalten.'
+              : '„'+name+'" wird entfernt. Kein Buch trägt dieses Schlagwort.',
+      ok:'Entfernen', danger:true }, () => {
+      kategorieLoeschen(name);
+      render();
+      toast('Kategorie entfernt.');
+    });
     return;
   }
   if (d.importZiel){
