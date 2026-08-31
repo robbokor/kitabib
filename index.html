@@ -3022,15 +3022,16 @@ function druckLeiste(art){
       '<button class="btn btn-sm" data-act="pruefbogen">'+icon('printer')+'Prüfbogen drucken</button>'+
     '</div>'+
     '<div class="field" style="border-top:1px solid var(--line);padding-top:14px">'+
-      '<label for="gemessen">Maßstab prüfen: Wie lang ist die 100-mm-Linie auf dem Prüfbogen wirklich?</label>'+
+      '<label for="gemessen">Maßstab · zurzeit '+Math.round(druckSkala()*1000)/10+' %</label>'+
       '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">'+
-        '<input id="gemessen" type="number" step="0.5" min="50" max="200" data-druck-off="gemessen" '+
-          'value="'+(+d.gemessen||100)+'" style="width:120px">'+
-        '<span class="hint">mm gemessen → KitaBib druckt mit '+Math.round(druckSkala()*1000)/10+' % Maßstab'+
-        (Math.abs(druckSkala()-1) < 0.005 ? '' : ' und gleicht das aus')+'</span>'+
+        '<input id="gemessen" type="number" step="0.5" min="40" max="250" data-druck-messwert '+
+          'placeholder="gemessen" style="width:130px">'+
+        '<span class="hint">mm – so lang ist die 100-mm-Linie auf dem <b>zuletzt gedruckten</b> Prüfbogen</span>'+
+        (Math.abs(druckSkala()-1) > 0.005
+          ? '<button class="btn btn-sm" data-act="massstab-zuruecksetzen">Auf 100 % zurück</button>' : '')+
       '</div>'+
-      '<p class="hint">Miss die schwarze Linie oben auf dem Prüfbogen mit einem Lineal. Sind es nicht 100 mm, '+
-      'trag den gemessenen Wert hier ein und drucke den Prüfbogen erneut – dann muss die Linie stimmen.</p>'+
+      '<p class="hint">Prüfbogen drucken, die schwarze Linie messen, den Wert hier eintragen. '+
+      'KitaBib rechnet den Maßstab fort – nach einer, spätestens zwei Runden misst die Linie 100 mm.</p>'+
     '</div>'+
     '<p class="hint">'+(art === 'etikett'
       ? 'Den Prüfbogen auf einfachem Papier drucken und gegen den Etikettenbogen halten – das kostet kein Etikett. '
@@ -3845,11 +3846,30 @@ function druckEinstellungen(){
   return S.org.druck;
 }
 /* Bogen aufbauen: Zellen auf Seiten verteilen und in Millimetern setzen */
+/* Der Massstab wird fortgeschrieben, nicht neu gesetzt: Ein Pruefbogen wird
+   ja bereits mit dem aktuellen Massstab gedruckt. Wer die Linie misst, misst
+   das Ergebnis der letzten Einstellung – also gilt
+   neuer Massstab = alter Massstab x 100 / gemessen. */
 function druckSkala(){
   const d = druckEinstellungen();
-  const gemessen = +d.gemessen || 100;
-  if (gemessen < 50 || gemessen > 200) return 1;
-  return 100 / gemessen;
+  if (d.skala === undefined || d.skala === null){
+    /* Alte Einstellung uebernehmen, falls vorhanden */
+    d.skala = d.gemessen ? 100 / d.gemessen : 1;
+    delete d.gemessen;
+  }
+  const k = +d.skala || 1;
+  return (k >= 0.5 && k <= 2) ? k : 1;
+}
+function massstabNachMessung(gemessen){
+  const d = druckEinstellungen();
+  const wert = parseFloat(gemessen);
+  if (!wert || wert < 40 || wert > 250) return 'Bitte die gemessene Länge in Millimetern eingeben (40 bis 250).';
+  const neu = druckSkala() * 100 / wert;
+  if (neu < 0.5 || neu > 2) return 'Das ergibt einen unplausiblen Maßstab. Stimmt die Messung?';
+  d.skala = neu;
+  logAction('Druckmaßstab auf '+Math.round(neu*1000)/10+' % gesetzt');
+  save();
+  return null;
 }
 function druckBogen(format, zellen, klasse, vorspann){
   const d = druckEinstellungen();
@@ -3889,7 +3909,7 @@ function pruefBogen(format){
     ' · Abstand '+(+format.luecke||0)+' / '+(+format.lueckeY||0)+' mm'+
     ' · Maßstab '+Math.round(druckSkala()*1000)/10+' %'+
     '<div class="pruef-massstab"><span class="pruef-linie"></span>'+
-    '100 mm – nachmessen und den Wert in KitaBib eintragen</div></div>';
+    'Diese Linie soll 100 mm sein. Nachmessen und den gemessenen Wert in KitaBib eintragen.</div></div>';
   return druckBogen(format, zellen, 'etiketten', kopf);
 }
 
@@ -3953,7 +3973,7 @@ function etikettZelle(c, format){
    Drei Wege in den eigenen Bestand: ISBN-Liste (Daten kommen von der DNB),
    Tabelle fuer Buecher ohne ISBN, und eine vollstaendige Sicherung.
    ======================================================================== */
-var FASSUNG = '31.08.2026 · 12';
+var FASSUNG = '31.08.2026 · 13';
 var bestand = { isbnText:'', isbnLauf:null, isbnErgebnis:null, tabText:'', tabErgebnis:null, sicherung:null };
 
 function isbnListeLesen(text){
@@ -4656,6 +4676,10 @@ const ACTIONS = {
       toast('Sicherung eingespielt.');
     });
   },
+  'massstab-zuruecksetzen': () => {
+    druckEinstellungen().skala = 1; save(); render();
+    toast('Maßstab auf 100 % zurückgesetzt.');
+  },
   'kategorie-neu': () => askText({ title:'Kategorie anlegen', label:'Name des Schlagworts', ok:'Anlegen' }, name => {
     const fehler = kategorieHinzufuegen(name);
     if (fehler){ toast(fehler); return; }
@@ -4971,11 +4995,13 @@ document.addEventListener('input', ev => {
   if (el.id === 'buchSuche'){ flow.qBuch = el.value; rerenderSheet(); return; }
   if (el.hasAttribute('data-roll-csv')){ roll.csv = el.value; return; }
   if (d.draft && flow && flow.draft){ flow.draft[d.draft] = el.value; return; }
-  if (d.druckOff){
-    const e = druckEinstellungen();
-    e[d.druckOff] = parseFloat(el.value) || (d.druckOff === 'gemessen' ? 100 : 0);
-    save();
-    if (d.druckOff === 'gemessen') render();
+  if (d.druckOff){ const e = druckEinstellungen(); e[d.druckOff] = parseFloat(el.value) || 0; save(); return; }
+  if (el.hasAttribute && el.hasAttribute('data-druck-messwert')){
+    const fehler = massstabNachMessung(el.value);
+    if (fehler){ toast(fehler); return; }
+    const neu = Math.round(druckSkala()*1000)/10;
+    render();
+    toast('Maßstab jetzt '+neu+' % – Prüfbogen noch einmal drucken und nachmessen.');
     return;
   }
   if (d.eigen){
