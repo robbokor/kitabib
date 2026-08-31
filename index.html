@@ -3037,18 +3037,26 @@ function feldMasse(format){
     rX: (format.randX != null ? +format.randX : (210 - gesamtB) / 2) + (+d.offX || 0),
     rY: (format.randY != null ? +format.randY : (297 - gesamtH) / 2) + (+d.offY || 0) };
 }
-/* Ein Feld ist erreichbar, wenn es ganz im bedruckbaren Fenster liegt. Nach
-   oben und links begrenzt der Geraeterand (er steckt im Versatz), nach unten
-   und rechts der Massstab. Beides zusammen - die linke Kante fehlte vorher,
-   und die ist beim Tablet die entscheidende. */
-function feldErreichbar(format, pos){
+function feldLage(format, pos){
   const k = druckSkala(), m = feldMasse(format);
   const sp = pos % format.spalten, ze = Math.floor(pos / format.spalten);
   const links = m.rX + sp * (format.breite + m.l);
   const oben  = m.rY + ze * (format.hoehe  + m.lY);
-  return links >= -0.5 && oben >= -0.5 &&
-         links + format.breite <= 210 / k + 0.5 &&
-         oben  + format.hoehe  <= 297 / k + 0.5;
+  return { k, links, oben, rechts: links + format.breite, unten: oben + format.hoehe };
+}
+/* Zwei sehr verschiedene Grenzen, und nur eine davon ist verhandelbar:
+
+   Links und oben ist es keine Vermutung. Was der Versatz aus der Seite
+   hinausschiebt, steht auf keinem Papier - das laesst sich nicht freischalten.
+
+   Rechts und unten ist es eine Rechnung darueber, wie weit das Geraet druckt.
+   Die lag schon zweimal daneben. Wer sieht, dass sein Ausdruck weiter kommt,
+   hebt sie mit 'Alle Felder freigeben' auf; dann gilt der Ausdruck. */
+function feldErreichbar(format, pos){
+  const g = feldLage(format, pos);
+  if (g.links < -0.5 || g.oben < -0.5) return false;
+  if (druckEinstellungen().sperre === false) return true;
+  return g.rechts <= 210 / g.k + 0.5 && g.unten <= 297 / g.k + 0.5;
 }
 function freiePositionen(art, format){
   const belegt = belegtListe(art, format), out = [];
@@ -3105,15 +3113,33 @@ function bogenKarte(art, format){
       'data-bogen-feld="'+i+'" data-bogen-art="'+art+'" '+
       (nichtErreichbar ? 'title="Dieses Gerät erreicht das Feld nicht" ' : '')+'>'+(i+1)+'</button>';
   }
+  const aus = druckEinstellungen().sperre === false;
+  const rechnung = (() => { let n = 0; const alt = druckEinstellungen().sperre;
+    druckEinstellungen().sperre = true;
+    for (let i = 0; i < proSeite; i++) if (feldErreichbar(format, i)) n++;
+    druckEinstellungen().sperre = alt; return n; })();
   return '<div class="card pad stack" style="gap:12px">'+
     '<div><span style="font-weight:700">Bogen belegen</span>'+
     '<span class="r-sub" style="display:block">Felder antippen, die schon abgezogen sind – der Druck überspringt sie. '+
-    frei+' frei'+(gesperrt ? ' · '+gesperrt+' von diesem Gerät nicht erreichbar' : '')+'</span></div>'+
+    frei+' frei'+(gesperrt ? ' · '+gesperrt+' von diesem Gerät nicht erreichbar' : '')+
+    (aus && rechnung < proSeite
+      ? ' · alle Felder freigegeben (die Rechnung hätte nur '+rechnung+' erwartet)' : '')+'</span></div>'+
     '<div class="bogen-raster" style="grid-template-columns:repeat('+format.spalten+',1fr)">'+felder+'</div>'+
     '<div class="btn-row">'+
       '<button class="btn btn-sm" data-act="bogen-neu" data-bogen-art="'+art+'">'+icon('refresh')+'Neuer Bogen</button>'+
       '<button class="btn btn-sm" data-act="bogen-voll" data-bogen-art="'+art+'">Alle als belegt markieren</button>'+
+      (aus
+        ? '<button class="btn btn-sm" data-act="sperre-an" data-bogen-art="'+art+'">Randprüfung wieder ein</button>'
+        : (rechnung < proSeite
+            ? '<button class="btn btn-sm" data-act="sperre-aus" data-bogen-art="'+art+'">Alle Felder freigeben</button>' : ''))+
     '</div>'+
+    (aus
+      ? (gesperrt
+          ? '<p class="hint">Die noch roten Felder liegen durch den Versatz links oder oberhalb der Seitenecke. '+
+            'Sie stehen auf keinem Papier – das lässt sich nicht freischalten, dafür braucht es den Rechner.</p>' : '')
+      : rechnung < proSeite
+        ? '<p class="hint">Kommt euer Druck weiter, als hier rot markiert ist? Dann gilt euer Ausdruck – mit '+
+          '„Alle Felder freigeben" schaltet ihr die Rechnung ab.</p>' : '')+
   '</div>';
 }
 
@@ -3213,6 +3239,7 @@ function druckLeiste(art){
          wirklich bedruckt. Passt der Bogen nicht hinein, laesst sich das nicht
          wegrechnen - also sagen wir, wie viele Felder uebrig bleiben. */
       const gesamtFelder = format.spalten * format.zeilen;
+      if (d.sperre === false) return '';
       let erreichbar = 0;
       for (let i = 0; i < gesamtFelder; i++) if (feldErreichbar(format, i)) erreichbar++;
       if (erreichbar === gesamtFelder) return '';
@@ -4180,7 +4207,7 @@ function etikettZelle(c, format){
    Drei Wege in den eigenen Bestand: ISBN-Liste (Daten kommen von der DNB),
    Tabelle fuer Buecher ohne ISBN, und eine vollstaendige Sicherung.
    ======================================================================== */
-var FASSUNG = '31.08.2026 · 20';
+var FASSUNG = '31.08.2026 · 21';
 var bestand = { isbnText:'', isbnLauf:null, isbnErgebnis:null, tabText:'', tabErgebnis:null, sicherung:null };
 
 function isbnListeLesen(text){
@@ -4882,6 +4909,14 @@ const ACTIONS = {
       go('start');
       toast('Sicherung eingespielt.');
     });
+  },
+  'sperre-aus': () => {
+    druckEinstellungen().sperre = false; save(); render();
+    toast('Alle Felder freigegeben – der Druck nutzt jetzt den ganzen Bogen.');
+  },
+  'sperre-an': () => {
+    delete druckEinstellungen().sperre; save(); render();
+    toast('Randprüfung wieder eingeschaltet.');
   },
   'bogen-neu': () => {
     const art = ereignisArt;
