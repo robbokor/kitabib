@@ -493,6 +493,8 @@ tr:last-child td{border-bottom:none}
   .druckzelle{display:flex; align-items:center; gap:3mm; padding:3mm; overflow:hidden; break-inside:avoid; background:#fff}
   .druckzelle.mit-rahmen{outline:0.2mm dashed #b9b9b9; outline-offset:-0.1mm}
   .druckzelle.leer{outline:none !important}
+  .druckzelle.eng{padding:2mm; gap:2mm}
+  .druckzelle.eng .dz-inv{font-size:7.5pt; line-height:1.15}
   .druckzelle.pruef{justify-content:center; color:#777; font-size:11pt}
   /* Raster und Lagemarke liegen als eigene Ebenen auf der Seite. Das Raster
      wird verschoben, die Marke nie – sie zeigt, wo der Drucker die Seitenecke
@@ -524,7 +526,10 @@ tr:last-child td{border-bottom:none}
   .druckzelle .dz-qr svg{width:100%; height:auto; display:block}
   .druckzelle .dz-text{flex:1; min-width:0}
   .druckzelle .dz-name{font-family:var(--display); font-weight:700; line-height:1.1; color:#000}
-  .druckzelle .dz-inv{font-weight:700; font-size:9pt; color:#000}
+  /* Die Inventarnummer darf nie umbrechen - halbe Nummern auf zwei Zeilen
+     sind im Regal schlimmer als eine Nummer, die etwas kleiner steht. */
+  .druckzelle .dz-inv{font-weight:700; font-size:9pt; color:#000; white-space:nowrap}
+  .druckzelle.klein .dz-inv{font-size:8pt}
   .druckzelle .dz-klein{font-size:8pt; color:#333; line-height:1.2; overflow:hidden}
   .druckzelle .dz-org{font-size:7pt; color:#444; margin-top:2mm; letter-spacing:.04em}
   .druckzelle.ausweis{flex-direction:column; align-items:stretch; justify-content:flex-start; gap:0; padding:4.5mm}
@@ -4115,6 +4120,10 @@ var ETIKETT_FORMATE = [
     luecke:2.5, lueckeY:0, randX:7.25, randY:15.15 },
   { id:'48x25',  name:'48,5 × 25,4 mm · 40 je Bogen', breite:48.5, hoehe:25.4, spalten:4, zeilen:10,
     luecke:2.5, lueckeY:0, randX:4.25, randY:21.5 },
+  { id:'45x21',  name:'45,7 × 21,2 mm · 48 je Bogen', breite:45.7, hoehe:21.2, spalten:4, zeilen:12,
+    luecke:2.5, lueckeY:0, randX:9.85, randY:21.3 },
+  { id:'38x21',  name:'38,1 × 21,2 mm · 65 je Bogen', breite:38.1, hoehe:21.2, spalten:5, zeilen:13,
+    luecke:2.5, lueckeY:0, randX:4.75, randY:10.7 },
   { id:'105x48', name:'105 × 48 mm · 12 je Bogen',    breite:105,  hoehe:48,   spalten:2, zeilen:6,
     luecke:0,   lueckeY:0 },
   { id:'eigen',  name:'Eigenes Format (selbst ausmessen)', eigen:true }
@@ -4261,8 +4270,11 @@ function karteZelle(k, format){
 
 function etikettZelle(c, format){
   var t = title(c.titleId), klein = format.hoehe < 30;
-  var qrGroesse = Math.min(format.hoehe - 6, klein ? 18 : 26);
-  return '<div class="druckzelle'+(druckEinstellungen().rahmen?' mit-rahmen':'')+'">'+
+  /* Unter 24 mm Hoehe entscheidet der Rand darueber, ob der Code noch zu lesen
+     ist: 3 mm Polster kosten hier ueber ein Zehntel der Modulgroesse. */
+  var eng = format.hoehe < 24;
+  var qrGroesse = Math.min(format.hoehe - (eng ? 4 : 6), klein ? 18 : 26);
+  return '<div class="druckzelle'+(klein?' klein':'')+(eng?' eng':'')+(druckEinstellungen().rahmen?' mit-rahmen':'')+'">'+
     '<div class="dz-qr" style="width:'+qrGroesse+'mm">'+qrSVG(c.token)+'</div>'+
     '<div class="dz-text">'+
       '<div class="dz-inv">'+esc(c.inv)+'</div>'+
@@ -4275,7 +4287,7 @@ function etikettZelle(c, format){
    Drei Wege in den eigenen Bestand: ISBN-Liste (Daten kommen von der DNB),
    Tabelle fuer Buecher ohne ISBN, und eine vollstaendige Sicherung.
    ======================================================================== */
-var FASSUNG = '31.08.2026 · 23';
+var FASSUNG = '31.08.2026 · 24';
 var bestand = { isbnText:'', isbnLauf:null, isbnErgebnis:null, tabText:'', tabErgebnis:null, sicherung:null };
 
 function isbnListeLesen(text){
