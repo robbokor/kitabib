@@ -483,8 +483,13 @@ tr:last-child td{border-bottom:none}
   .druckzelle.pruef{justify-content:center; color:#777; font-size:11pt}
   .druckskala{transform-origin:top left}
   .pruef-kopf{font-size:9pt; color:#000; margin-bottom:4mm; font-family:var(--ui)}
-  .pruef-massstab{margin-top:2mm; font-size:8pt; color:#333; display:flex; align-items:center; gap:2mm}
-  .pruef-linie{display:inline-block; width:100mm; height:0.6mm; background:#000}
+  /* Die Messlatte darf unter keinen Umstaenden schrumpfen: sie ist der
+     Bezugspunkt fuer alles andere. Deshalb eigener Block, feste Breite,
+     kein Flex-Kontext – und Endmarken, damit klar ist, wo gemessen wird. */
+  .pruef-massstab{margin-top:2mm; font-size:8pt; color:#333}
+  .pruef-linie{display:block; width:100mm; height:3.5mm; box-sizing:border-box; flex:none;
+    border-left:0.4mm solid #000; border-right:0.4mm solid #000; border-bottom:0.5mm solid #000;
+    margin-bottom:1.2mm}
   .druckzelle .dz-qr{flex:none}
   .druckzelle .dz-qr svg{width:100%; height:auto; display:block}
   .druckzelle .dz-text{flex:1; min-width:0}
@@ -3021,6 +3026,12 @@ function druckLeiste(art){
         (d.rahmen ? 'Schnittlinien werden gedruckt' : 'Ohne Schnittlinien')+'</button>'+
       '<button class="btn btn-sm" data-act="pruefbogen">'+icon('printer')+'Prüfbogen drucken</button>'+
     '</div>'+
+    '<div class="notice calm">'+icon('printer')+'<span><span class="n-title">Zuerst den Prüfbogen, dann kleben</span>'+
+      '<span class="n-body">Manche Geräte – Tablets öfter als Rechner – verkleinern den Ausdruck. '+
+      'Deshalb immer erst den Prüfbogen auf einfachem Papier, die Messlatte nachmessen und den Wert eintragen. '+
+      'Bleibt es auch nach zwei Runden daneben, dieselbe Adresse am Rechner öffnen: dort im Druckdialog '+
+      '<b>Ränder „keine"</b> und <b>Skalierung 100 %</b>, das ist der verlässlichste Weg. '+
+      'Zum Scannen und Ausleihen bleibt das Tablet unverändert.</span></span></div>'+
     '<div class="field" style="border-top:1px solid var(--line);padding-top:14px">'+
       '<label for="gemessen">Maßstab · zurzeit '+Math.round(druckSkala()*1000)/10+' %</label>'+
       '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">'+
@@ -3030,8 +3041,9 @@ function druckLeiste(art){
         (Math.abs(druckSkala()-1) > 0.005
           ? '<button class="btn btn-sm" data-act="massstab-zuruecksetzen">Auf 100 % zurück</button>' : '')+
       '</div>'+
-      '<p class="hint">Prüfbogen drucken, die schwarze Linie messen, den Wert hier eintragen. '+
-      'KitaBib rechnet den Maßstab fort – nach einer, spätestens zwei Runden misst die Linie 100 mm.</p>'+
+      '<p class="hint">Für den Feinschliff am Rechner: Prüfbogen drucken, die schwarze Linie messen, den Wert hier eintragen. '+
+      'KitaBib rechnet den Maßstab fort. Weicht die Linie um mehr als ein paar Millimeter ab, stimmt eher eine '+
+      'Einstellung im Druckdialog nicht – dann dort ansetzen statt hier.</p>'+
     '</div>'+
     (() => {
       /* Wird der Massstab hochgesetzt, weil das Geraet verkleinert, passt
@@ -3936,7 +3948,8 @@ function pruefBogen(format){
     ' · Abstand '+(+format.luecke||0)+' / '+(+format.lueckeY||0)+' mm'+
     ' · Maßstab '+Math.round(druckSkala()*1000)/10+' %'+
     '<div class="pruef-massstab"><span class="pruef-linie"></span>'+
-    'Diese Linie soll 100 mm sein. Nachmessen und den gemessenen Wert in KitaBib eintragen.</div></div>';
+    'Zwischen den beiden Endmarken sollen es genau 100 mm sein. '+
+    'Nachmessen und den gemessenen Wert in KitaBib eintragen.</div></div>';
   return druckBogen(format, zellen, 'etiketten', kopf);
 }
 
@@ -4000,7 +4013,7 @@ function etikettZelle(c, format){
    Drei Wege in den eigenen Bestand: ISBN-Liste (Daten kommen von der DNB),
    Tabelle fuer Buecher ohne ISBN, und eine vollstaendige Sicherung.
    ======================================================================== */
-var FASSUNG = '31.08.2026 · 15';
+var FASSUNG = '31.08.2026 · 16';
 var bestand = { isbnText:'', isbnLauf:null, isbnErgebnis:null, tabText:'', tabErgebnis:null, sicherung:null };
 
 function isbnListeLesen(text){
@@ -4396,24 +4409,8 @@ function druckModusBeenden(){
   var host = document.getElementById('printHost');
   if (host) host.innerHTML = '';
 }
-/* Wird der Inhalt vergroessert, muss die Seite mitwachsen – sonst schneidet
-   der Seitenrahmen ab, was ueber 210 mm hinausragt. Die vergroesserte Seite
-   wird vom Geraet wieder auf das Papier verkleinert; unterm Strich steht der
-   Inhalt in wahrer Groesse und vollstaendig auf dem Blatt. */
-function seitenmassSetzen(){
-  const k = druckSkala();
-  const b = (210 * k).toFixed(2), h = (297 * k).toFixed(2);
-  let st = document.getElementById('seitenmass');
-  if (!st){ st = document.createElement('style'); st.id = 'seitenmass'; document.head.appendChild(st); }
-  st.textContent = '@media print{'+
-    '@page{size:'+b+'mm '+h+'mm; margin:0}'+
-    'html,body{width:'+b+'mm !important; max-width:'+b+'mm !important}'+
-    '.druckseite{width:'+b+'mm !important; height:'+h+'mm !important}'+
-  '}';
-}
 function doPrint(html){
   druckModusBeenden();
-  seitenmassSetzen();
   $('#printHost').innerHTML = html;
   document.body.classList.add('printing-sheet');
   let printed = false;
