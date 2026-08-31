@@ -497,14 +497,20 @@ tr:last-child td{border-bottom:none}
      tatsaechlich hinlegt. Beide werden gleich skaliert. */
   .druckskala, .druck-marke{position:absolute; left:0; top:0; width:210mm; transform-origin:top left}
   .druck-marke{height:297mm}
-  .marke-senk{position:absolute; left:50mm; top:50mm; height:55mm; border-left:0.6mm solid #000}
-  .marke-waag{position:absolute; left:50mm; top:50mm; width:55mm; border-top:0.6mm solid #000}
-  .marke-text{position:absolute; left:53mm; top:53mm; width:100mm; font-size:8pt; line-height:1.35;
+/* Die Marke sitzt auf der Seitenecke selbst (0/0). Was der Drucker davon
+     nach innen schiebt, ist genau sein Rand - der gemessene Abstand ist also
+     unmittelbar der gesuchte Versatz, ohne Kopfrechnen. */
+  .marke-senk{position:absolute; left:0; top:0; height:150mm; border-left:0.8mm solid #000}
+  .marke-waag{position:absolute; left:0; top:0; width:150mm; border-top:0.8mm solid #000}
+  .marke-ecke{position:absolute; left:0; top:0; width:14mm; height:14mm; background:#000}
+  .marke-text{position:absolute; left:17mm; top:2mm; width:150mm; font-size:8.5pt; line-height:1.35;
     color:#000; font-family:var(--ui)}
   .marke-text b{font-weight:700}
   /* Der Kopf steht in der Ebene der Marke, nicht ueber dem Raster: sonst
      schoebe er die Etikettenfelder nach unten und der Pruefbogen loege. */
-  .pruef-kopf{position:absolute; left:2mm; top:1mm; width:206mm; font-size:8pt; color:#000; font-family:var(--ui)}
+/* Nicht bei 0 beginnen: dort steht die senkrechte Linie des Winkel-Ecks,
+     und die wuerde das linke Ende der Messlatte unkenntlich machen. */
+  .pruef-kopf{position:absolute; left:18mm; top:17mm; width:188mm; font-size:8pt; color:#000; font-family:var(--ui)}
   /* Die Messlatte darf unter keinen Umstaenden schrumpfen: sie ist der
      Bezugspunkt fuer alles andere. Deshalb eigener Block, feste Breite,
      kein Flex-Kontext – und Endmarken, damit klar ist, wo gemessen wird. */
@@ -3173,20 +3179,35 @@ function druckLeiste(art){
     '<div class="field" style="border-top:1px solid var(--line);padding-top:14px">'+
       '<label>Lage · Versatz zurzeit '+(+d.offX||0)+' / '+(+d.offY||0)+' mm</label>'+
       '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">'+
-        '<input type="number" step="0.5" min="0" max="120" data-druck-marke="x" '+
+        '<input type="number" step="0.5" min="0" max="80" data-druck-marke="x" '+
           'placeholder="waagerecht" style="width:130px" aria-label="Vom linken Blattrand bis zur senkrechten Linie">'+
-        '<input type="number" step="0.5" min="0" max="120" data-druck-marke="y" '+
+        '<input type="number" step="0.5" min="0" max="80" data-druck-marke="y" '+
           'placeholder="senkrecht" style="width:130px" aria-label="Vom oberen Blattrand bis zur waagerechten Linie">'+
-        '<span class="hint">mm – vom Blattrand bis zur jeweiligen Linie der Winkelmarke</span>'+
+        '<span class="hint">mm – vom Blattrand bis zur jeweiligen Linie des Winkel-Ecks</span>'+
         ((+d.offX||0) || (+d.offY||0)
           ? '<button class="btn btn-sm" data-act="versatz-zuruecksetzen">Versatz löschen</button>' : '')+
       '</div>'+
       '<p class="hint"><b>Schritt 2:</b> Die Größe stimmt, der Ausdruck sitzt aber daneben? Dann legt das Gerät die '+
-      'Seite in seinen eigenen Rand – deshalb rutscht alles nach unten und rechts. Auf dem Prüfbogen steht dafür eine '+
-      'Winkelmarke: von den beiden Blatträndern bis zu ihren Linien messen, beides soll 50 mm sein. Die gemessenen '+
-      'Werte hier eintragen, KitaBib zieht den Versatz ab. Was dadurch über den Blattrand hinausfiele, gilt als nicht '+
-      'erreichbar und wird beim Drucken übersprungen.</p>'+
+      'Seite in seinen eigenen Rand – deshalb rutscht alles nach unten und rechts. Auf dem Prüfbogen sitzt dafür oben '+
+      'links ein schwarzes <b>Winkel-Eck</b>: das ist die Ecke der Seite. Vom linken Blattrand bis zu seiner senkrechten '+
+      'Linie messen, vom oberen Blattrand bis zur waagerechten – diese beiden Zahlen hier eintragen. Sie sind der Rand '+
+      'des Geräts, KitaBib rechnet ihn heraus. Was dadurch über den Blattrand hinausfiele, gilt als nicht erreichbar '+
+      'und wird beim Drucken übersprungen. <b>Ohne diesen Schritt bleibt der Druck verschoben</b> – der Maßstab allein '+
+      'richtet nur die Größe.</p>'+
     '</div>'+
+    (() => {
+      /* Wer den Massstab hochsetzen musste, dessen Geraet laesst Rand frei -
+         und dann sitzt der Druck ohne Schritt 2 zwangslaeufig daneben. Genau
+         daran ist der erste Anlauf gescheitert, also steht es jetzt gross da. */
+      const d2 = druckEinstellungen();
+      if (druckSkala() <= 1.005 || d2.lageGemessen) return '';
+      return '<div class="notice overdue">'+icon('alert')+'<span>'+
+        '<span class="n-title">Schritt 2 fehlt noch: die Lage</span>'+
+        '<span class="n-body">Der Maßstab steht auf '+Math.round(druckSkala()*1000)/10+' %, das Gerät verkleinert also '+
+        'und lässt dabei Rand frei. Die <b>Größe</b> stimmt damit – die <b>Lage</b> noch nicht: der ganze Bogen rutscht '+
+        'um diesen Rand nach unten und rechts, und die Etiketten landen quer auf den Stanzlinien. '+
+        'Prüfbogen drucken, das schwarze Winkel-Eck oben links ausmessen und die beiden Werte unten eintragen.</span></span></div>';
+    })()+
     (() => {
       /* Massstab und Versatz zusammen ergeben das Fenster, das dieses Geraet
          wirklich bedruckt. Passt der Bogen nicht hinein, laesst sich das nicht
@@ -4091,10 +4112,11 @@ function pruefBogen(format){
     ' · Versatz '+(+d.offX||0)+' / '+(+d.offY||0)+' mm'+
     '<div class="pruef-massstab"><span class="pruef-linie"></span>'+
     '<b>Schritt 1 – Größe:</b> zwischen den Endmarken sollen es genau 100 mm sein. Nachmessen, Wert eintragen.</div></div>'+
-    '<span class="marke-senk"></span><span class="marke-waag"></span>'+
-    '<div class="marke-text"><b>Schritt 2 – Lage:</b> vom <b>linken</b> Blattrand bis zur senkrechten Linie '+
-    'und vom <b>oberen</b> Blattrand bis zur waagerechten Linie messen. '+
-    'Beides soll 50 mm sein. Die gemessenen Werte in KitaBib eintragen.</div>';
+    '<span class="marke-ecke"></span><span class="marke-senk"></span><span class="marke-waag"></span>'+
+    '<div class="marke-text"><b>Schritt 2 – Lage:</b> Das schwarze Winkel-Eck ist die Ecke der Seite. '+
+    'Vom <b>linken</b> Blattrand bis zur senkrechten Linie messen und vom <b>oberen</b> Blattrand bis zur '+
+    'waagerechten Linie. Was hier steht, ist der Rand des Geräts – beide Werte in KitaBib eintragen. '+
+    'Liegt das Eck genau in der Blattecke, ist nichts zu tun.</div>';
   return druckBogen(format, zellen, 'etiketten', kopf);
 }
 
@@ -4158,7 +4180,7 @@ function etikettZelle(c, format){
    Drei Wege in den eigenen Bestand: ISBN-Liste (Daten kommen von der DNB),
    Tabelle fuer Buecher ohne ISBN, und eine vollstaendige Sicherung.
    ======================================================================== */
-var FASSUNG = '31.08.2026 · 19';
+var FASSUNG = '31.08.2026 · 20';
 var bestand = { isbnText:'', isbnLauf:null, isbnErgebnis:null, tabText:'', tabErgebnis:null, sicherung:null };
 
 function isbnListeLesen(text){
@@ -5246,11 +5268,12 @@ document.addEventListener('change', ev => {
   const el = ev.target, d = el.dataset;
   if (d.druckMarke){
     const wert = parseFloat(el.value);
-    if (!isFinite(wert) || wert < 0 || wert > 120){ toast('Bitte den gemessenen Abstand in mm eintragen (0 bis 120).'); return; }
-    /* Die Marke steht im Entwurf bei 50 mm und wird vom Versatz nicht bewegt.
-       Was darueber hinaus gemessen wird, ist der Rand des Geraets. */
+    if (!isFinite(wert) || wert < 0 || wert > 80){ toast('Bitte den gemessenen Abstand in mm eintragen (0 bis 80).'); return; }
+    /* Die Marke sitzt auf der Seitenecke und wird vom Versatz nicht bewegt.
+       Der gemessene Abstand ist deshalb der Geraeterand selbst. */
     const e = druckEinstellungen();
-    e[d.druckMarke === 'x' ? 'offX' : 'offY'] = Math.round((50 - wert) * 10) / 10;
+    e[d.druckMarke === 'x' ? 'offX' : 'offY'] = -wert;
+    e.lageGemessen = true;
     save(); render();
     toast('Versatz jetzt '+(+e.offX||0)+' / '+(+e.offY||0)+' mm – Prüfbogen noch einmal drucken und nachsehen.');
     return;
