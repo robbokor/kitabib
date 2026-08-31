@@ -380,6 +380,8 @@ button.row:hover{background:var(--green-soft)}
   background-image:repeating-linear-gradient(45deg, transparent, transparent 4px, var(--line) 4px, var(--line) 5px)}
 .bogen-feld.gesperrt{background:var(--rose-soft); border-color:var(--rose-line); color:var(--rose-ink); cursor:not-allowed}
 .bogen-feld.gesperrt:hover{background:var(--rose-soft); border-color:var(--rose-line)}
+.bogen-feld.einrichten{cursor:pointer}
+.bogen-feld.einrichten:hover{border-color:var(--rose-ink)}
 .zeichen-gitter{display:grid; grid-template-columns:repeat(auto-fill,minmax(64px,1fr)); gap:10px}
 .zeichen-knopf{
   aspect-ratio:1; border:1px solid var(--line-strong); border-radius:var(--r-m); background:var(--card);
@@ -3044,17 +3046,48 @@ function feldLage(format, pos){
   const oben  = m.rY + ze * (format.hoehe  + m.lY);
   return { k, links, oben, rechts: links + format.breite, unten: oben + format.hoehe };
 }
-/* Alles hier ist eine Vorhersage darueber, wie weit das Geraet druckt - und
-   sie lag schon zweimal daneben. Deshalb hebt 'Alle Felder freigeben' sie
-   vollstaendig auf, auch links und oben. Nachpruefen kostet nichts: der
-   Pruefbogen druckt immer alle Felder mit Nummer. Welche Nummern auf dem
-   Papier erscheinen, die kann das Geraet - das ist die Wahrheit, nicht das
-   hier. */
+/* Welche Felder ein Geraet bedruckt, laesst sich ausrechnen oder nachsehen.
+   Ausgerechnet habe ich es dreimal, dreimal daneben. Wer den Pruefbogen in der
+   Hand haelt, weiss es genau - und diese Liste schlaegt jede Rechnung. Erst
+   wenn sie fehlt, greift die Schaetzung. */
+function totListe(format){
+  const d = druckEinstellungen();
+  if (!d.tot) d.tot = {};
+  if (!Array.isArray(d.tot[format.id])) d.tot[format.id] = [];
+  return d.tot[format.id];
+}
 function feldErreichbar(format, pos){
-  if (druckEinstellungen().sperre === false) return true;
+  const d = druckEinstellungen();
+  if (d.geraetGeprueft) return totListe(format).indexOf(pos) < 0;
+  if (d.sperre === false) return true;
   const g = feldLage(format, pos);
   return g.links >= -0.5 && g.oben >= -0.5 &&
          g.rechts <= 210 / g.k + 0.5 && g.unten <= 297 / g.k + 0.5;
+}
+function bogenFormat(art){
+  return art === 'karte' ? formatFinden(KARTEN_FORMATE, druckEinstellungen().karte) : etikettFormat();
+}
+/* Beim Einrichten schaltet ein Tipp eine Gruppe von Feldern um: sind alle
+   schon gemeldet, werden sie wieder frei, sonst kommen die fehlenden dazu. */
+function totUmschalten(format, welche){
+  const d = druckEinstellungen();
+  d.geraetGeprueft = true;
+  delete d.sperre;
+  const liste = totListe(format);
+  const aus = welche(format);
+  const allesDrin = aus.every(p => liste.indexOf(p) >= 0);
+  aus.forEach(p => {
+    const i = liste.indexOf(p);
+    if (allesDrin){ if (i >= 0) liste.splice(i, 1); }
+    else if (i < 0) liste.push(p);
+  });
+  liste.sort((a, b) => a - b);
+  /* Ein gemeldetes Feld kann nicht zugleich als abgezogen gelten. */
+  ['etikett', 'karte'].forEach(art => {
+    const b = druckEinstellungen().belegt && druckEinstellungen().belegt[belegtSchluessel(art, format)];
+    if (b) for (let i = b.length - 1; i >= 0; i--) if (liste.indexOf(b[i]) >= 0) b.splice(i, 1);
+  });
+  save(); render();
 }
 function freiePositionen(art, format){
   const belegt = belegtListe(art, format), out = [];
@@ -3099,49 +3132,84 @@ function bogenAnzahl(art, format, anzahl){
 
 /* Belegungskarte zum Antippen */
 function bogenKarte(art, format){
+  const d = druckEinstellungen();
   const belegt = belegtListe(art, format);
   const proSeite = format.spalten * format.zeilen;
-  let frei = 0, gesperrt = 0;
-  let felder = '';
+  const einrichten = bogenModus === 'geraet';
+  let frei = 0, gesperrt = 0, felder = '';
   for (let i = 0; i < proSeite; i++){
     const nichtErreichbar = !feldErreichbar(format, i);
     const istBelegt = belegt.indexOf(i) >= 0;
     if (nichtErreichbar) gesperrt++; else if (!istBelegt) frei++;
-    felder += '<button class="bogen-feld'+(istBelegt?' belegt':'')+(nichtErreichbar?' gesperrt':'')+'" '+
+    felder += '<button class="bogen-feld'+(istBelegt && !nichtErreichbar ? ' belegt' : '')+
+      (nichtErreichbar ? ' gesperrt' : '')+(einrichten ? ' einrichten' : '')+'" '+
       'data-bogen-feld="'+i+'" data-bogen-art="'+art+'" '+
-      (nichtErreichbar ? 'title="Dieses Gerät erreicht das Feld nicht" ' : '')+'>'+(i+1)+'</button>';
+      'title="'+(nichtErreichbar ? 'Kommt auf diesem Gerät nicht aufs Papier' : 'Feld '+(i+1))+'">'+(i+1)+'</button>';
   }
-  const aus = druckEinstellungen().sperre === false;
-  const rechnung = (() => { let n = 0; const alt = druckEinstellungen().sperre;
-    druckEinstellungen().sperre = true;
+  const aus = d.sperre === false;
+  const rechnung = (() => { let n = 0; const altS = d.sperre, altG = d.geraetGeprueft;
+    d.sperre = true; d.geraetGeprueft = false;
     for (let i = 0; i < proSeite; i++) if (feldErreichbar(format, i)) n++;
-    druckEinstellungen().sperre = alt; return n; })();
+    d.sperre = altS; d.geraetGeprueft = altG; return n; })();
+
+  /* Beim Einrichten faellt meist genau eine Randspalte oder die letzte Zeile
+     weg - das soll ein Tipp sein und nicht sieben. */
+  let schnell = '';
+  if (einrichten){
+    let spBtn = '', zeBtn = '';
+    for (let c = 0; c < format.spalten; c++)
+      spBtn += '<button class="btn btn-sm" data-bogen-spalte="'+c+'" data-bogen-art="'+art+'">'+(c+1)+'</button>';
+    for (let z = 0; z < format.zeilen; z++)
+      zeBtn += '<button class="btn btn-sm" data-bogen-zeile="'+z+'" data-bogen-art="'+art+'">'+(z+1)+'</button>';
+    schnell =
+      '<div class="stack" style="gap:8px">'+
+        '<div class="btn-row" style="align-items:center"><span class="hint" style="min-width:58px">Spalte</span>'+spBtn+'</div>'+
+        '<div class="btn-row" style="align-items:center"><span class="hint" style="min-width:58px">Zeile</span>'+zeBtn+'</div>'+
+      '</div>';
+  }
+
   return '<div class="card pad stack" style="gap:12px">'+
-    '<div><span style="font-weight:700">Bogen belegen</span>'+
-    '<span class="r-sub" style="display:block">Felder antippen, die schon abgezogen sind – der Druck überspringt sie. '+
-    frei+' frei'+(gesperrt ? ' · '+gesperrt+' von diesem Gerät nicht erreichbar' : '')+
-    (aus && rechnung < proSeite
-      ? ' · alle Felder freigegeben (die Rechnung hätte nur '+rechnung+' erwartet)' : '')+'</span></div>'+
-    '<div class="bogen-raster" style="grid-template-columns:repeat('+format.spalten+',1fr)">'+felder+'</div>'+
-    '<div class="btn-row">'+
-      '<button class="btn btn-sm" data-act="bogen-neu" data-bogen-art="'+art+'">'+icon('refresh')+'Neuer Bogen</button>'+
-      '<button class="btn btn-sm" data-act="bogen-voll" data-bogen-art="'+art+'">Alle als belegt markieren</button>'+
-      (aus
-        ? '<button class="btn btn-sm" data-act="sperre-an" data-bogen-art="'+art+'">Randprüfung wieder ein</button>'
-        : (rechnung < proSeite
-            ? '<button class="btn btn-sm" data-act="sperre-aus" data-bogen-art="'+art+'">Alle Felder freigeben</button>' : ''))+
+    '<div class="toggle-row">'+
+      '<button class="toggle" data-bogen-modus="belegt" aria-pressed="'+(einrichten?'false':'true')+'">Bogen belegen</button>'+
+      '<button class="toggle" data-bogen-modus="geraet" aria-pressed="'+(einrichten?'true':'false')+'">Gerät einrichten</button>'+
     '</div>'+
-    (aus
-      ? '<p class="hint">Alle Felder sind frei – KitaBib rechnet nicht mehr mit, was euer Gerät erreicht. '+
-        '<b>Zum Nachsehen:</b> Prüfbogen auf einfachem Papier drucken. Er druckt immer alle '+proSeite+' Felder mit '+
-        'Nummer – welche Nummern auf dem Papier erscheinen, die kann euer Gerät. Fehlt eine, dieses Feld hier '+
-        'als belegt markieren, dann wird es übersprungen.</p>'
-      : rechnung < proSeite
-        ? '<p class="hint">Kommt euer Druck weiter, als hier rot markiert ist? Dann gilt euer Ausdruck – mit '+
-          '„Alle Felder freigeben" schaltet ihr die Rechnung ab. Was wirklich geht, zeigt der Prüfbogen: '+
-          'er druckt alle '+proSeite+' Felder mit Nummer, auf einfachem Papier und ohne ein Etikett zu kosten.</p>' : '')+
+    '<div><span class="r-sub" style="display:block">'+
+      (einrichten
+        ? 'Prüfbogen auf einfachem Papier drucken und hier die Felder antippen, deren Nummer <b>nicht</b> auf dem '+
+          'Papier erscheint. Ganze Spalten und Zeilen gehen mit einem Tipp.'
+        : 'Felder antippen, die schon abgezogen sind – der Druck überspringt sie. '+
+          frei+' frei'+(gesperrt ? ' · '+gesperrt+(d.geraetGeprueft ? ' von euch als nicht druckbar gemeldet'
+                                                                   : ' von diesem Gerät nicht erreichbar') : '')+
+          (aus && !d.geraetGeprueft && rechnung < proSeite
+            ? ' · alle Felder freigegeben (die Rechnung hätte nur '+rechnung+' erwartet)' : ''))+
+    '</span></div>'+
+    '<div class="bogen-raster" style="grid-template-columns:repeat('+format.spalten+',1fr)">'+felder+'</div>'+
+    schnell+
+    '<div class="btn-row">'+
+      (einrichten
+        ? '<button class="btn btn-sm" data-act="geraet-zuruecksetzen" data-bogen-art="'+art+'">'+icon('refresh')+'Wieder alle Felder</button>'+
+          '<button class="btn btn-sm btn-primary" data-bogen-modus="belegt">Fertig</button>'
+        : '<button class="btn btn-sm" data-act="bogen-neu" data-bogen-art="'+art+'">'+icon('refresh')+'Neuer Bogen</button>'+
+          '<button class="btn btn-sm" data-act="bogen-voll" data-bogen-art="'+art+'">Alle als belegt markieren</button>'+
+          (d.geraetGeprueft ? ''
+            : aus
+              ? '<button class="btn btn-sm" data-act="sperre-an" data-bogen-art="'+art+'">Randprüfung wieder ein</button>'
+              : rechnung < proSeite
+                ? '<button class="btn btn-sm" data-act="sperre-aus" data-bogen-art="'+art+'">Alle Felder freigeben</button>' : ''))+
+    '</div>'+
+    '<p class="hint">'+
+      (einrichten
+        ? 'Was ihr hier festhaltet, gilt nur für dieses Gerät und bleibt über „Neuer Bogen" hinaus bestehen. '+
+          'KitaBib rechnet dann nicht mehr selbst – euer Ausdruck entscheidet.'
+        : d.geraetGeprueft
+          ? 'Die roten Felder habt ihr selbst als nicht druckbar gemeldet. Stimmt das nicht mehr – anderer Drucker, '+
+            'andere Einstellung – unter „Gerät einrichten" ändern.'
+          : 'Fehlen beim Drucken Felder, die hier weiß sind? Unter „Gerät einrichten" einmal festhalten, was euer '+
+            'Gerät wirklich aufs Papier bringt. Der Prüfbogen zeigt es, ohne ein Etikett zu kosten.')+
+    '</p>'+
   '</div>';
 }
+
 
 /* Einstellungen, die beide Druckansichten teilen */
 function druckLeiste(art){
@@ -3228,7 +3296,7 @@ function druckLeiste(art){
       const d2 = druckEinstellungen();
       if (druckSkala() <= 1.005 || d2.lageGemessen) return '';
       return '<div class="notice overdue">'+icon('alert')+'<span>'+
-        '<span class="n-title">Schritt 2 fehlt noch: die Lage</span>'+
+        '<span class="n-title">Schritt 2 fehlt noch: die Lage auf dem Etikett</span>'+
         '<span class="n-body">Der Maßstab steht auf '+Math.round(druckSkala()*1000)/10+' %, das Gerät verkleinert also '+
         'und lässt dabei Rand frei. Die <b>Größe</b> stimmt damit – die <b>Lage</b> noch nicht: der ganze Bogen rutscht '+
         'um diesen Rand nach unten und rechts, und die Etiketten landen quer auf den Stanzlinien. '+
@@ -3239,7 +3307,7 @@ function druckLeiste(art){
          wirklich bedruckt. Passt der Bogen nicht hinein, laesst sich das nicht
          wegrechnen - also sagen wir, wie viele Felder uebrig bleiben. */
       const gesamtFelder = format.spalten * format.zeilen;
-      if (d.sperre === false) return '';
+      if (d.sperre === false || d.geraetGeprueft) return '';
       let erreichbar = 0;
       for (let i = 0; i < gesamtFelder; i++) if (feldErreichbar(format, i)) erreichbar++;
       if (erreichbar === gesamtFelder) return '';
@@ -4207,7 +4275,7 @@ function etikettZelle(c, format){
    Drei Wege in den eigenen Bestand: ISBN-Liste (Daten kommen von der DNB),
    Tabelle fuer Buecher ohne ISBN, und eine vollstaendige Sicherung.
    ======================================================================== */
-var FASSUNG = '31.08.2026 · 22';
+var FASSUNG = '31.08.2026 · 23';
 var bestand = { isbnText:'', isbnLauf:null, isbnErgebnis:null, tabText:'', tabErgebnis:null, sicherung:null };
 
 function isbnListeLesen(text){
@@ -4910,6 +4978,13 @@ const ACTIONS = {
       toast('Sicherung eingespielt.');
     });
   },
+  'geraet-zuruecksetzen': () => {
+    const d = druckEinstellungen();
+    delete d.geraetGeprueft;
+    if (d.tot) d.tot = {};
+    save(); render();
+    toast('Wieder alle Felder – KitaBib schätzt jetzt selbst.');
+  },
   'sperre-aus': () => {
     druckEinstellungen().sperre = false; save(); render();
     toast('Alle Felder freigegeben – der Druck nutzt jetzt den ganzen Bogen.');
@@ -4965,6 +5040,7 @@ const ACTIONS = {
 };
 
 var ereignisArt = 'etikett';
+var bogenModus = 'belegt';
 document.addEventListener('click', ev => {
   const el = ev.target.closest('[data-act],[data-nav],[data-go],[data-title],[data-child],[data-cat],[data-group],'+
     '[data-scan-child],[data-pick-child],[data-scan-copy],[data-unpick],[data-scan-return],[data-lookup],'+
@@ -4973,18 +5049,32 @@ document.addEventListener('click', ev => {
     '[data-dlg-wahl],[data-copy-status],[data-anonymisieren],[data-rolle],[data-pick-copy],[data-pick-return],'+
     '[data-karte],[data-kartenfeld],[data-zeichen-aendern],[data-zeichen-waehlen],[data-etikett-filter],'+
     '[data-gruppenkonto],[data-gruppenkonto-weg],[data-import-ziel],[data-kat-umbenennen],[data-kat-loeschen],'+
-    '[data-bogen-feld],[data-bogen-art]');
+    '[data-bogen-feld],[data-bogen-art],[data-bogen-modus],[data-bogen-spalte],[data-bogen-zeile]');
   if (!el) return;
   const d = el.dataset;
   if (d.bogenArt) ereignisArt = d.bogenArt;
 
+  if (d.bogenModus){ bogenModus = d.bogenModus; render(); return; }
+
+  if (d.bogenSpalte !== undefined && el.hasAttribute('data-bogen-spalte')){
+    totUmschalten(bogenFormat(d.bogenArt), (f) => {
+      const aus = []; for (let z = 0; z < f.zeilen; z++) aus.push(z * f.spalten + (+d.bogenSpalte)); return aus; });
+    return;
+  }
+  if (d.bogenZeile !== undefined && el.hasAttribute('data-bogen-zeile')){
+    totUmschalten(bogenFormat(d.bogenArt), (f) => {
+      const aus = []; for (let c = 0; c < f.spalten; c++) aus.push((+d.bogenZeile) * f.spalten + c); return aus; });
+    return;
+  }
   if (d.bogenFeld !== undefined && el.hasAttribute('data-bogen-feld')){
     const art = d.bogenArt || 'etikett';
-    const f = art === 'karte' ? formatFinden(KARTEN_FORMATE, druckEinstellungen().karte) : etikettFormat();
-    if (!feldErreichbar(f, +d.bogenFeld)){ toast('Dieses Feld erreicht das Gerät beim Drucken nicht.'); return; }
+    const f = bogenFormat(art);
+    const pos = +d.bogenFeld;
+    if (bogenModus === 'geraet'){ totUmschalten(f, () => [pos]); return; }
+    if (!feldErreichbar(f, pos)){ toast('Dieses Feld kommt auf diesem Gerät nicht aufs Papier.'); return; }
     const liste = belegtListe(art, f);
-    const i = liste.indexOf(+d.bogenFeld);
-    if (i >= 0) liste.splice(i, 1); else liste.push(+d.bogenFeld);
+    const i = liste.indexOf(pos);
+    if (i >= 0) liste.splice(i, 1); else liste.push(pos);
     save(); render();
     return;
   }
