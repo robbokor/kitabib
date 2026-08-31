@@ -485,19 +485,30 @@ tr:last-child td{border-bottom:none}
      Mit dieser Regel ist die Layoutbreite genau eine A4-Seite. */
   html, body{width:210mm !important; min-width:0 !important; max-width:210mm !important;
              margin:0 !important; padding:0 !important}
-  .druckseite{width:210mm; height:297mm; box-sizing:border-box; break-after:page; overflow:hidden}
+  .druckseite{position:relative; width:210mm; height:297mm; box-sizing:border-box; break-after:page; overflow:hidden}
   .druckseite:last-child{break-after:auto}
   .druckraster{display:grid}
   .druckzelle{display:flex; align-items:center; gap:3mm; padding:3mm; overflow:hidden; break-inside:avoid; background:#fff}
   .druckzelle.mit-rahmen{outline:0.2mm dashed #b9b9b9; outline-offset:-0.1mm}
   .druckzelle.leer{outline:none !important}
   .druckzelle.pruef{justify-content:center; color:#777; font-size:11pt}
-  .druckskala{transform-origin:top left}
-  .pruef-kopf{font-size:9pt; color:#000; margin-bottom:4mm; font-family:var(--ui)}
+  /* Raster und Lagemarke liegen als eigene Ebenen auf der Seite. Das Raster
+     wird verschoben, die Marke nie – sie zeigt, wo der Drucker die Seitenecke
+     tatsaechlich hinlegt. Beide werden gleich skaliert. */
+  .druckskala, .druck-marke{position:absolute; left:0; top:0; width:210mm; transform-origin:top left}
+  .druck-marke{height:297mm}
+  .marke-senk{position:absolute; left:50mm; top:50mm; height:55mm; border-left:0.6mm solid #000}
+  .marke-waag{position:absolute; left:50mm; top:50mm; width:55mm; border-top:0.6mm solid #000}
+  .marke-text{position:absolute; left:53mm; top:53mm; width:100mm; font-size:8pt; line-height:1.35;
+    color:#000; font-family:var(--ui)}
+  .marke-text b{font-weight:700}
+  /* Der Kopf steht in der Ebene der Marke, nicht ueber dem Raster: sonst
+     schoebe er die Etikettenfelder nach unten und der Pruefbogen loege. */
+  .pruef-kopf{position:absolute; left:2mm; top:1mm; width:206mm; font-size:8pt; color:#000; font-family:var(--ui)}
   /* Die Messlatte darf unter keinen Umstaenden schrumpfen: sie ist der
      Bezugspunkt fuer alles andere. Deshalb eigener Block, feste Breite,
      kein Flex-Kontext – und Endmarken, damit klar ist, wo gemessen wird. */
-  .pruef-massstab{margin-top:2mm; font-size:8pt; color:#333}
+  .pruef-massstab{margin-top:1.5mm; font-size:8pt; color:#333}
   .pruef-linie{display:block; width:100mm; height:3.5mm; box-sizing:border-box; flex:none;
     border-left:0.4mm solid #000; border-right:0.4mm solid #000; border-bottom:0.5mm solid #000;
     margin-bottom:1.2mm}
@@ -3012,19 +3023,26 @@ function belegtListe(art, format){
   return d.belegt[k];
 }
 function feldMasse(format){
+  const d = druckEinstellungen();
   const l = +format.luecke || 0, lY = +format.lueckeY || 0;
   const gesamtB = format.spalten * format.breite + (format.spalten - 1) * l;
   const gesamtH = format.zeilen * format.hoehe + (format.zeilen - 1) * lY;
   return { l, lY, gesamtB, gesamtH,
-    rX: format.randX != null ? +format.randX : (210 - gesamtB) / 2,
-    rY: format.randY != null ? +format.randY : (297 - gesamtH) / 2 };
+    rX: (format.randX != null ? +format.randX : (210 - gesamtB) / 2) + (+d.offX || 0),
+    rY: (format.randY != null ? +format.randY : (297 - gesamtH) / 2) + (+d.offY || 0) };
 }
+/* Ein Feld ist erreichbar, wenn es ganz im bedruckbaren Fenster liegt. Nach
+   oben und links begrenzt der Geraeterand (er steckt im Versatz), nach unten
+   und rechts der Massstab. Beides zusammen - die linke Kante fehlte vorher,
+   und die ist beim Tablet die entscheidende. */
 function feldErreichbar(format, pos){
   const k = druckSkala(), m = feldMasse(format);
   const sp = pos % format.spalten, ze = Math.floor(pos / format.spalten);
-  const rechts = m.rX + (sp + 1) * format.breite + sp * m.l;
-  const unten  = m.rY + (ze + 1) * format.hoehe  + ze * m.lY;
-  return rechts <= 210 / k + 0.5 && unten <= 297 / k + 0.5;
+  const links = m.rX + sp * (format.breite + m.l);
+  const oben  = m.rY + ze * (format.hoehe  + m.lY);
+  return links >= -0.5 && oben >= -0.5 &&
+         links + format.breite <= 210 / k + 0.5 &&
+         oben  + format.hoehe  <= 297 / k + 0.5;
 }
 function freiePositionen(art, format){
   const belegt = belegtListe(art, format), out = [];
@@ -3148,41 +3166,51 @@ function druckLeiste(art){
         (Math.abs(druckSkala()-1) > 0.005
           ? '<button class="btn btn-sm" data-act="massstab-zuruecksetzen">Auf 100 % zurück</button>' : '')+
       '</div>'+
-      '<p class="hint">Für den Feinschliff am Rechner: Prüfbogen drucken, die schwarze Linie messen, den Wert hier eintragen. '+
+      '<p class="hint"><b>Schritt 1:</b> Prüfbogen drucken, die schwarze Linie messen, den Wert hier eintragen. '+
       'KitaBib rechnet den Maßstab fort. Weicht die Linie um mehr als ein paar Millimeter ab, stimmt eher eine '+
       'Einstellung im Druckdialog nicht – dann dort ansetzen statt hier.</p>'+
     '</div>'+
+    '<div class="field" style="border-top:1px solid var(--line);padding-top:14px">'+
+      '<label>Lage · Versatz zurzeit '+(+d.offX||0)+' / '+(+d.offY||0)+' mm</label>'+
+      '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">'+
+        '<input type="number" step="0.5" min="0" max="120" data-druck-marke="x" '+
+          'placeholder="waagerecht" style="width:130px" aria-label="Vom linken Blattrand bis zur senkrechten Linie">'+
+        '<input type="number" step="0.5" min="0" max="120" data-druck-marke="y" '+
+          'placeholder="senkrecht" style="width:130px" aria-label="Vom oberen Blattrand bis zur waagerechten Linie">'+
+        '<span class="hint">mm – vom Blattrand bis zur jeweiligen Linie der Winkelmarke</span>'+
+        ((+d.offX||0) || (+d.offY||0)
+          ? '<button class="btn btn-sm" data-act="versatz-zuruecksetzen">Versatz löschen</button>' : '')+
+      '</div>'+
+      '<p class="hint"><b>Schritt 2:</b> Die Größe stimmt, der Ausdruck sitzt aber daneben? Dann legt das Gerät die '+
+      'Seite in seinen eigenen Rand – deshalb rutscht alles nach unten und rechts. Auf dem Prüfbogen steht dafür eine '+
+      'Winkelmarke: von den beiden Blatträndern bis zu ihren Linien messen, beides soll 50 mm sein. Die gemessenen '+
+      'Werte hier eintragen, KitaBib zieht den Versatz ab. Was dadurch über den Blattrand hinausfiele, gilt als nicht '+
+      'erreichbar und wird beim Drucken übersprungen.</p>'+
+    '</div>'+
     (() => {
-      /* Wird der Massstab hochgesetzt, weil das Geraet verkleinert, passt
-         irgendwann nicht mehr der ganze Bogen auf die bedruckbare Flaeche.
-         Das laesst sich nicht wegrechnen – also sagen wir es. */
-      /* Mit mitwachsender Seite steht die volle A4-Flaeche zur Verfuegung –
-         eng wird es erst, wenn das Geraet zusaetzlich Rand freilaesst. */
-      /* Wird der Inhalt um k vergroessert, bleibt vom Raster nur der Teil
-         sichtbar, der noch in die A4-Seite passt. Das ist keine Einstellung:
-         Was das Geraet nicht bedruckt, gibt es auf dem Papier nicht. */
-      const k = druckSkala();
-      const nutzbarB = 210 / k, nutzbarH = 297 / k;
-      const l = +format.luecke || 0, lY = +format.lueckeY || 0;
-      const gesamtB = format.spalten * format.breite + (format.spalten - 1) * l;
-      const gesamtH = format.zeilen * format.hoehe + (format.zeilen - 1) * lY;
-      const rX = format.randX != null ? +format.randX : (210 - gesamtB) / 2;
-      const rY = format.randY != null ? +format.randY : (297 - gesamtH) / 2;
-      const brauchtB = rX + gesamtB, brauchtH = rY + gesamtH;
-      if (brauchtB <= nutzbarB + 0.5 && brauchtH <= nutzbarH + 0.5) return '';
-      let passenSpalten = 0, x = rX;
-      while (x + format.breite <= nutzbarB + 0.5){ passenSpalten++; x += format.breite + l; }
-      let passenZeilen = 0, y = rY;
-      while (y + format.hoehe <= nutzbarH + 0.5){ passenZeilen++; y += format.hoehe + lY; }
-      const erreichbar = passenSpalten * passenZeilen, gesamtFelder = format.spalten * format.zeilen;
-      return '<div class="notice todo">'+icon('alert')+'<span><span class="n-title">Von diesem Gerät sind '+erreichbar+' der '+gesamtFelder+' Felder erreichbar</span>'+
-        '<span class="n-body">Tablets geben Webseiten beim Drucken feste Ränder – bei '+Math.round(k*1000)/10+' % Maßstab bleiben '+
-        Math.round(nutzbarB)+' × '+Math.round(nutzbarH)+' mm übrig, der volle Bogen bräuchte '+
-        Math.round((rX+gesamtB)*10)/10+' × '+Math.round((rY+gesamtH)*10)/10+' mm. Es sind also '+passenSpalten+' von '+format.spalten+' Spalten und '+
-        passenZeilen+' von '+format.zeilen+' Zeilen zu bedrucken; die übrigen sind unten rot und werden übersprungen. '+
-        '<b>Für ein paar Etiketten reicht das</b> – unten markieren, welche Felder schon abgezogen sind, dann rutscht der Druck in die nächsten freien. '+
-        'Einen ganzen Bogen am Rechner drucken: dieselbe Adresse öffnen, Ränder „keine", Skalierung 100 %. '+
-        'Der Maßstab wird je Gerät gemerkt, eure Einstellung hier bleibt erhalten.</span></span></div>';
+      /* Massstab und Versatz zusammen ergeben das Fenster, das dieses Geraet
+         wirklich bedruckt. Passt der Bogen nicht hinein, laesst sich das nicht
+         wegrechnen - also sagen wir, wie viele Felder uebrig bleiben. */
+      const gesamtFelder = format.spalten * format.zeilen;
+      let erreichbar = 0;
+      for (let i = 0; i < gesamtFelder; i++) if (feldErreichbar(format, i)) erreichbar++;
+      if (erreichbar === gesamtFelder) return '';
+      const k = druckSkala(), m = feldMasse(format);
+      const cls = erreichbar ? 'todo' : 'overdue';
+      return '<div class="notice '+cls+'">'+icon('alert')+'<span><span class="n-title">'+
+        (erreichbar ? 'Von diesem Gerät sind '+erreichbar+' der '+gesamtFelder+' Felder erreichbar'
+                    : 'Dieser Bogen ist von diesem Gerät nicht zu bedrucken')+'</span>'+
+        '<span class="n-body">Das Gerät gibt Webseiten beim Drucken feste Ränder: bei '+
+        Math.round(k*1000)/10+' % Maßstab'+
+        (((+d.offX||0) || (+d.offY||0)) ? ' und '+(+d.offX||0)+' / '+(+d.offY||0)+' mm Versatz' : '')+
+        ' bleibt ein Fenster von '+Math.round(210/k)+' × '+Math.round(297/k)+' mm, und der Bogen bräuchte '+
+        Math.round((m.rX+m.gesamtB)*10)/10+' × '+Math.round((m.rY+m.gesamtH)*10)/10+' mm ab der Blattecke. '+
+        (erreichbar
+          ? '<b>Für ein paar Etiketten reicht das.</b> Die nicht erreichbaren Felder sind unten rot und werden übersprungen; '+
+            'unten außerdem markieren, welche Felder schon abgezogen sind, dann rutscht der Druck in die nächsten freien. '
+          : 'Kein einziges Feld liegt ganz im bedruckbaren Fenster. ')+
+        'Einen ganzen Bogen am Rechner drucken: dieselbe Adresse öffnen, im Druckdialog Ränder „keine" und Skalierung 100 %. '+
+        'Maßstab und Versatz werden je Gerät gemerkt, eure Einstellung hier bleibt erhalten.</span></span></div>';
     })()+
     '<p class="hint">'+(art === 'etikett'
       ? 'Den Prüfbogen auf einfachem Papier drucken und gegen den Etikettenbogen halten – das kostet kein Etikett. '
@@ -4037,15 +4065,16 @@ function druckBogen(format, zellen, klasse, vorspann){
   /* Der Massstab wird als Transformation gesetzt: sie veraendert die
      Layoutbreite nicht und wirkt deshalb sauber gegen eine Verkleinerung
      durch den Drucker. */
+  /* Verschoben wird per translate, nicht per padding: nur so wirken auch
+     negative Werte, und die geraet der Drucker mit eigenem Rand zwingend. */
   return seiten.map(seite =>
     '<div class="druckseite">'+
-      '<div class="druckskala" style="transform:scale('+k+');transform-origin:top left;'+
-        'padding:'+Math.max(0,randY)+'mm 0 0 '+Math.max(0,randX)+'mm">'+
-        (vorspann || '')+
+      '<div class="druckskala" style="transform:scale('+k+') translate('+randX+'mm,'+randY+'mm)">'+
         '<div class="druckraster '+klasse+'" style="grid-template-columns:repeat('+format.spalten+','+format.breite+'mm);'+
         'grid-auto-rows:'+format.hoehe+'mm;column-gap:'+luecke+'mm;row-gap:'+lueckeY+'mm">'+
         seite.join('')+'</div>'+
       '</div>'+
+      (vorspann ? '<div class="druck-marke" style="transform:scale('+k+')">'+vorspann+'</div>' : '')+
     '</div>').join('');
 }
 
@@ -4056,12 +4085,16 @@ function pruefBogen(format){
   const anzahl = format.spalten * format.zeilen;
   for (let i = 0; i < anzahl; i++)
     zellen.push('<div class="druckzelle mit-rahmen pruef"><span>'+(i+1)+'</span></div>');
+  const d = druckEinstellungen();
   const kopf = '<div class="pruef-kopf">'+esc(format.name)+' · Etikett '+format.breite+' × '+format.hoehe+' mm'+
-    ' · Abstand '+(+format.luecke||0)+' / '+(+format.lueckeY||0)+' mm'+
     ' · Maßstab '+Math.round(druckSkala()*1000)/10+' %'+
+    ' · Versatz '+(+d.offX||0)+' / '+(+d.offY||0)+' mm'+
     '<div class="pruef-massstab"><span class="pruef-linie"></span>'+
-    'Zwischen den beiden Endmarken sollen es genau 100 mm sein. '+
-    'Nachmessen und den gemessenen Wert in KitaBib eintragen.</div></div>';
+    '<b>Schritt 1 – Größe:</b> zwischen den Endmarken sollen es genau 100 mm sein. Nachmessen, Wert eintragen.</div></div>'+
+    '<span class="marke-senk"></span><span class="marke-waag"></span>'+
+    '<div class="marke-text"><b>Schritt 2 – Lage:</b> vom <b>linken</b> Blattrand bis zur senkrechten Linie '+
+    'und vom <b>oberen</b> Blattrand bis zur waagerechten Linie messen. '+
+    'Beides soll 50 mm sein. Die gemessenen Werte in KitaBib eintragen.</div>';
   return druckBogen(format, zellen, 'etiketten', kopf);
 }
 
@@ -4125,7 +4158,7 @@ function etikettZelle(c, format){
    Drei Wege in den eigenen Bestand: ISBN-Liste (Daten kommen von der DNB),
    Tabelle fuer Buecher ohne ISBN, und eine vollstaendige Sicherung.
    ======================================================================== */
-var FASSUNG = '31.08.2026 · 18';
+var FASSUNG = '31.08.2026 · 19';
 var bestand = { isbnText:'', isbnLauf:null, isbnErgebnis:null, tabText:'', tabErgebnis:null, sicherung:null };
 
 function isbnListeLesen(text){
@@ -4855,6 +4888,10 @@ const ACTIONS = {
     toast('„'+name.trim()+'" steht jetzt bei jedem Buch zur Auswahl.');
   }),
   'pruefbogen': () => { doPrint(pruefBogen(etikettFormat())); druckHinweis(); },
+  'versatz-zuruecksetzen': () => {
+    const e = druckEinstellungen(); e.offX = 0; e.offY = 0; save(); render();
+    toast('Versatz gelöscht.');
+  },
   'rahmen-umschalten': () => { const d = druckEinstellungen(); d.rahmen = !d.rahmen; save(); render(); },
   'print-anleitung': () => { doPrint('<div class="druckseite anl-seite">'+anleitungInhalt()+'</div>'); },
   'print-cards': () => printCards(S.children.filter(k => k.active && (!kidFilter || k.groupId === kidFilter))),
@@ -5207,6 +5244,17 @@ document.addEventListener('input', ev => {
 });
 document.addEventListener('change', ev => {
   const el = ev.target, d = el.dataset;
+  if (d.druckMarke){
+    const wert = parseFloat(el.value);
+    if (!isFinite(wert) || wert < 0 || wert > 120){ toast('Bitte den gemessenen Abstand in mm eintragen (0 bis 120).'); return; }
+    /* Die Marke steht im Entwurf bei 50 mm und wird vom Versatz nicht bewegt.
+       Was darueber hinaus gemessen wird, ist der Rand des Geraets. */
+    const e = druckEinstellungen();
+    e[d.druckMarke === 'x' ? 'offX' : 'offY'] = Math.round((50 - wert) * 10) / 10;
+    save(); render();
+    toast('Versatz jetzt '+(+e.offX||0)+' / '+(+e.offY||0)+' mm – Prüfbogen noch einmal drucken und nachsehen.');
+    return;
+  }
   if (el.hasAttribute && el.hasAttribute('data-kinder-datei')){
     const datei = el.files && el.files[0];
     if (!datei) return;
