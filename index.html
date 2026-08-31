@@ -470,12 +470,18 @@ tr:last-child td{border-bottom:none}
   body:has(#printHost > *) > *:not(#printHost){display:none !important}
   #toast{display:none !important}
   @page{size:A4; margin:0}
+  /* Ohne feste Breite setzt Safari die Seite in Bildschirmbreite (~980 px)
+     und schrumpft sie aufs Papier – dann stimmt kein Millimetermass mehr.
+     Mit dieser Regel ist die Layoutbreite genau eine A4-Seite. */
+  html, body{width:210mm !important; min-width:0 !important; max-width:210mm !important;
+             margin:0 !important; padding:0 !important}
   .druckseite{width:210mm; height:297mm; box-sizing:border-box; break-after:page; overflow:hidden}
   .druckseite:last-child{break-after:auto}
   .druckraster{display:grid}
   .druckzelle{display:flex; align-items:center; gap:3mm; padding:3mm; overflow:hidden; break-inside:avoid; background:#fff}
   .druckzelle.mit-rahmen{outline:0.2mm dashed #b9b9b9; outline-offset:-0.1mm}
   .druckzelle.pruef{justify-content:center; color:#777; font-size:11pt}
+  .druckskala{transform-origin:top left}
   .pruef-kopf{font-size:9pt; color:#000; margin-bottom:4mm; font-family:var(--ui)}
   .pruef-massstab{margin-top:2mm; font-size:8pt; color:#333; display:flex; align-items:center; gap:2mm}
   .pruef-linie{display:inline-block; width:100mm; height:0.6mm; background:#000}
@@ -2972,12 +2978,23 @@ function druckLeiste(art){
     '<div class="btn-row">'+
       '<button class="toggle" data-act="rahmen-umschalten" aria-pressed="'+(d.rahmen?'true':'false')+'">'+
         (d.rahmen ? 'Schnittlinien werden gedruckt' : 'Ohne Schnittlinien')+'</button>'+
-      (art === 'etikett' ? '<button class="btn btn-sm" data-act="pruefbogen">'+icon('printer')+'Prüfbogen drucken</button>' : '')+
+      '<button class="btn btn-sm" data-act="pruefbogen">'+icon('printer')+'Prüfbogen drucken</button>'+
+    '</div>'+
+    '<div class="field" style="border-top:1px solid var(--line);padding-top:14px">'+
+      '<label for="gemessen">Maßstab prüfen: Wie lang ist die 100-mm-Linie auf dem Prüfbogen wirklich?</label>'+
+      '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">'+
+        '<input id="gemessen" type="number" step="0.5" min="50" max="200" data-druck-off="gemessen" '+
+          'value="'+(+d.gemessen||100)+'" style="width:120px">'+
+        '<span class="hint">mm gemessen → KitaBib druckt mit '+Math.round(druckSkala()*1000)/10+' % Maßstab'+
+        (Math.abs(druckSkala()-1) < 0.005 ? '' : ' und gleicht das aus')+'</span>'+
+      '</div>'+
+      '<p class="hint">Miss die schwarze Linie oben auf dem Prüfbogen mit einem Lineal. Sind es nicht 100 mm, '+
+      'trag den gemessenen Wert hier ein und drucke den Prüfbogen erneut – dann muss die Linie stimmen.</p>'+
     '</div>'+
     '<p class="hint">'+(art === 'etikett'
-      ? 'Den Prüfbogen auf einfachem Papier drucken und gegen den Etikettenbogen halten. Passt es nicht, hier nachjustieren – das kostet kein Etikett. '
-      : 'Sitzt der erste Bogen daneben, hier um die gemessene Abweichung verschieben. ')+
-      'Im Druckdialog „Tatsächliche Größe" bzw. 100 % wählen.</p>'+
+      ? 'Den Prüfbogen auf einfachem Papier drucken und gegen den Etikettenbogen halten – das kostet kein Etikett. '
+      : 'Sitzt der erste Bogen daneben, mit der Feinjustierung verschieben. ')+
+      'Im Druckdialog zusätzlich „Tatsächliche Größe" bzw. 100 % wählen, falls angeboten.</p>'+
   '</div>';
 }
 
@@ -3760,22 +3777,37 @@ function druckEinstellungen(){
   return S.org.druck;
 }
 /* Bogen aufbauen: Zellen auf Seiten verteilen und in Millimetern setzen */
-function druckBogen(format, zellen, klasse){
+function druckSkala(){
+  const d = druckEinstellungen();
+  const gemessen = +d.gemessen || 100;
+  if (gemessen < 50 || gemessen > 200) return 1;
+  return 100 / gemessen;
+}
+function druckBogen(format, zellen, klasse, vorspann){
   const d = druckEinstellungen();
   const luecke = +format.luecke || 0, lueckeY = +format.lueckeY || 0;
   const breiteGesamt = format.spalten * format.breite + (format.spalten - 1) * luecke;
   const hoeheGesamt  = format.zeilen  * format.hoehe  + (format.zeilen  - 1) * lueckeY;
   const randX = (format.randX != null ? +format.randX : (210 - breiteGesamt) / 2) + (+d.offX || 0);
   const randY = (format.randY != null ? +format.randY : (297 - hoeheGesamt) / 2) + (+d.offY || 0);
+  const k = druckSkala();
   const proSeite = format.spalten * format.zeilen;
   const seiten = [];
   for (let i = 0; i < zellen.length; i += proSeite) seiten.push(zellen.slice(i, i + proSeite));
   if (!seiten.length) seiten.push([]);
+  /* Der Massstab wird als Transformation gesetzt: sie veraendert die
+     Layoutbreite nicht und wirkt deshalb sauber gegen eine Verkleinerung
+     durch den Drucker. */
   return seiten.map(seite =>
-    '<div class="druckseite" style="padding:'+Math.max(0,randY)+'mm 0 0 '+Math.max(0,randX)+'mm">'+
-      '<div class="druckraster '+klasse+'" style="grid-template-columns:repeat('+format.spalten+','+format.breite+'mm);'+
-      'grid-auto-rows:'+format.hoehe+'mm;column-gap:'+luecke+'mm;row-gap:'+lueckeY+'mm">'+
-      seite.join('')+'</div></div>').join('');
+    '<div class="druckseite">'+
+      '<div class="druckskala" style="transform:scale('+k+');transform-origin:top left;'+
+        'padding:'+Math.max(0,randY)+'mm 0 0 '+Math.max(0,randX)+'mm">'+
+        (vorspann || '')+
+        '<div class="druckraster '+klasse+'" style="grid-template-columns:repeat('+format.spalten+','+format.breite+'mm);'+
+        'grid-auto-rows:'+format.hoehe+'mm;column-gap:'+luecke+'mm;row-gap:'+lueckeY+'mm">'+
+        seite.join('')+'</div>'+
+      '</div>'+
+    '</div>').join('');
 }
 
 /* Pruefbogen: nur die Umrisse und ein Massstab. Auf einfachem Papier drucken
@@ -3785,12 +3817,12 @@ function pruefBogen(format){
   const anzahl = format.spalten * format.zeilen;
   for (let i = 0; i < anzahl; i++)
     zellen.push('<div class="druckzelle mit-rahmen pruef"><span>'+(i+1)+'</span></div>');
-  return druckBogen(format, zellen, 'etiketten')
-    .replace('<div class="druckraster', '<div class="pruef-kopf">'+
-      esc(format.name)+' · Etikett '+format.breite+' × '+format.hoehe+' mm · '+
-      'Abstand '+(+format.luecke||0)+' / '+(+format.lueckeY||0)+' mm'+
-      '<div class="pruef-massstab"><span class="pruef-linie"></span>100 mm – nachmessen, sonst skaliert der Drucker</div>'+
-      '</div><div class="druckraster');
+  const kopf = '<div class="pruef-kopf">'+esc(format.name)+' · Etikett '+format.breite+' × '+format.hoehe+' mm'+
+    ' · Abstand '+(+format.luecke||0)+' / '+(+format.lueckeY||0)+' mm'+
+    ' · Maßstab '+Math.round(druckSkala()*1000)/10+' %'+
+    '<div class="pruef-massstab"><span class="pruef-linie"></span>'+
+    '100 mm – nachmessen und den Wert in KitaBib eintragen</div></div>';
+  return druckBogen(format, zellen, 'etiketten', kopf);
 }
 
 function karteZelle(k, format){
@@ -3853,7 +3885,7 @@ function etikettZelle(c, format){
    Drei Wege in den eigenen Bestand: ISBN-Liste (Daten kommen von der DNB),
    Tabelle fuer Buecher ohne ISBN, und eine vollstaendige Sicherung.
    ======================================================================== */
-var FASSUNG = '28.08.2026 · 10';
+var FASSUNG = '31.08.2026 · 11';
 var bestand = { isbnText:'', isbnLauf:null, isbnErgebnis:null, tabText:'', tabErgebnis:null, sicherung:null };
 
 function isbnListeLesen(text){
@@ -4842,7 +4874,13 @@ document.addEventListener('input', ev => {
   if (el.id === 'buchSuche'){ flow.qBuch = el.value; rerenderSheet(); return; }
   if (el.hasAttribute('data-roll-csv')){ roll.csv = el.value; return; }
   if (d.draft && flow && flow.draft){ flow.draft[d.draft] = el.value; return; }
-  if (d.druckOff){ const e = druckEinstellungen(); e[d.druckOff] = parseFloat(el.value) || 0; save(); return; }
+  if (d.druckOff){
+    const e = druckEinstellungen();
+    e[d.druckOff] = parseFloat(el.value) || (d.druckOff === 'gemessen' ? 100 : 0);
+    save();
+    if (d.druckOff === 'gemessen') render();
+    return;
+  }
   if (d.eigen){
     const s2 = druckEinstellungen();
     if (!s2.eigenes) s2.eigenes = { breite:70, hoehe:37, spalten:3, zeilen:8, luecke:0, lueckeY:0, randX:0, randY:0 };
