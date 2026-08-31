@@ -3044,19 +3044,17 @@ function feldLage(format, pos){
   const oben  = m.rY + ze * (format.hoehe  + m.lY);
   return { k, links, oben, rechts: links + format.breite, unten: oben + format.hoehe };
 }
-/* Zwei sehr verschiedene Grenzen, und nur eine davon ist verhandelbar:
-
-   Links und oben ist es keine Vermutung. Was der Versatz aus der Seite
-   hinausschiebt, steht auf keinem Papier - das laesst sich nicht freischalten.
-
-   Rechts und unten ist es eine Rechnung darueber, wie weit das Geraet druckt.
-   Die lag schon zweimal daneben. Wer sieht, dass sein Ausdruck weiter kommt,
-   hebt sie mit 'Alle Felder freigeben' auf; dann gilt der Ausdruck. */
+/* Alles hier ist eine Vorhersage darueber, wie weit das Geraet druckt - und
+   sie lag schon zweimal daneben. Deshalb hebt 'Alle Felder freigeben' sie
+   vollstaendig auf, auch links und oben. Nachpruefen kostet nichts: der
+   Pruefbogen druckt immer alle Felder mit Nummer. Welche Nummern auf dem
+   Papier erscheinen, die kann das Geraet - das ist die Wahrheit, nicht das
+   hier. */
 function feldErreichbar(format, pos){
-  const g = feldLage(format, pos);
-  if (g.links < -0.5 || g.oben < -0.5) return false;
   if (druckEinstellungen().sperre === false) return true;
-  return g.rechts <= 210 / g.k + 0.5 && g.unten <= 297 / g.k + 0.5;
+  const g = feldLage(format, pos);
+  return g.links >= -0.5 && g.oben >= -0.5 &&
+         g.rechts <= 210 / g.k + 0.5 && g.unten <= 297 / g.k + 0.5;
 }
 function freiePositionen(art, format){
   const belegt = belegtListe(art, format), out = [];
@@ -3134,12 +3132,14 @@ function bogenKarte(art, format){
             ? '<button class="btn btn-sm" data-act="sperre-aus" data-bogen-art="'+art+'">Alle Felder freigeben</button>' : ''))+
     '</div>'+
     (aus
-      ? (gesperrt
-          ? '<p class="hint">Die noch roten Felder liegen durch den Versatz links oder oberhalb der Seitenecke. '+
-            'Sie stehen auf keinem Papier – das lässt sich nicht freischalten, dafür braucht es den Rechner.</p>' : '')
+      ? '<p class="hint">Alle Felder sind frei – KitaBib rechnet nicht mehr mit, was euer Gerät erreicht. '+
+        '<b>Zum Nachsehen:</b> Prüfbogen auf einfachem Papier drucken. Er druckt immer alle '+proSeite+' Felder mit '+
+        'Nummer – welche Nummern auf dem Papier erscheinen, die kann euer Gerät. Fehlt eine, dieses Feld hier '+
+        'als belegt markieren, dann wird es übersprungen.</p>'
       : rechnung < proSeite
         ? '<p class="hint">Kommt euer Druck weiter, als hier rot markiert ist? Dann gilt euer Ausdruck – mit '+
-          '„Alle Felder freigeben" schaltet ihr die Rechnung ab.</p>' : '')+
+          '„Alle Felder freigeben" schaltet ihr die Rechnung ab. Was wirklich geht, zeigt der Prüfbogen: '+
+          'er druckt alle '+proSeite+' Felder mit Nummer, auf einfachem Papier und ohne ein Etikett zu kosten.</p>' : '')+
   '</div>';
 }
 
@@ -4207,7 +4207,7 @@ function etikettZelle(c, format){
    Drei Wege in den eigenen Bestand: ISBN-Liste (Daten kommen von der DNB),
    Tabelle fuer Buecher ohne ISBN, und eine vollstaendige Sicherung.
    ======================================================================== */
-var FASSUNG = '31.08.2026 · 21';
+var FASSUNG = '31.08.2026 · 22';
 var bestand = { isbnText:'', isbnLauf:null, isbnErgebnis:null, tabText:'', tabErgebnis:null, sicherung:null };
 
 function isbnListeLesen(text){
