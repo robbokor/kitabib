@@ -3037,8 +3037,10 @@ function druckLeiste(art){
       /* Wird der Massstab hochgesetzt, weil das Geraet verkleinert, passt
          irgendwann nicht mehr der ganze Bogen auf die bedruckbare Flaeche.
          Das laesst sich nicht wegrechnen – also sagen wir es. */
+      /* Mit mitwachsender Seite steht die volle A4-Flaeche zur Verfuegung –
+         eng wird es erst, wenn das Geraet zusaetzlich Rand freilaesst. */
       const k = druckSkala();
-      const nutzbarB = 210 / k, nutzbarH = 297 / k;
+      const nutzbarB = 210, nutzbarH = 297;
       const l = +format.luecke || 0, lY = +format.lueckeY || 0;
       const gesamtB = format.spalten * format.breite + (format.spalten - 1) * l;
       const gesamtH = format.zeilen * format.hoehe + (format.zeilen - 1) * lY;
@@ -3051,8 +3053,8 @@ function druckLeiste(art){
       let passenZeilen = 0, y = rY;
       while (y + format.hoehe <= nutzbarH + 0.5){ passenZeilen++; y += format.hoehe + lY; }
       return '<div class="notice overdue">'+icon('alert')+'<span><span class="n-title">Der Bogen passt nicht auf die bedruckbare Fläche</span>'+
-        '<span class="n-body">Bei '+Math.round(k*1000)/10+' % Maßstab bedruckt das Gerät nur '+
-        Math.round(nutzbarB)+' × '+Math.round(nutzbarH)+' mm der Seite. Davon werden '+
+        '<span class="n-body">Auf eine Seite passen nur '+
+        Math.round(nutzbarB)+' × '+Math.round(nutzbarH)+' mm. Davon werden '+
         passenSpalten+' von '+format.spalten+' Spalten und '+passenZeilen+' von '+format.zeilen+' Zeilen erfasst – der Rest fällt weg. '+
         'Das lässt sich nicht wegrechnen: Was das Gerät nicht bedruckt, kann keine Einstellung hinzaubern. '+
         '<b>Etikettenbögen deshalb besser vom Rechner aus drucken</b> – dort im Druckdialog Ränder auf „keine" und Skalierung auf 100 % stellen, '+
@@ -3998,7 +4000,7 @@ function etikettZelle(c, format){
    Drei Wege in den eigenen Bestand: ISBN-Liste (Daten kommen von der DNB),
    Tabelle fuer Buecher ohne ISBN, und eine vollstaendige Sicherung.
    ======================================================================== */
-var FASSUNG = '31.08.2026 · 14';
+var FASSUNG = '31.08.2026 · 15';
 var bestand = { isbnText:'', isbnLauf:null, isbnErgebnis:null, tabText:'', tabErgebnis:null, sicherung:null };
 
 function isbnListeLesen(text){
@@ -4394,8 +4396,24 @@ function druckModusBeenden(){
   var host = document.getElementById('printHost');
   if (host) host.innerHTML = '';
 }
+/* Wird der Inhalt vergroessert, muss die Seite mitwachsen – sonst schneidet
+   der Seitenrahmen ab, was ueber 210 mm hinausragt. Die vergroesserte Seite
+   wird vom Geraet wieder auf das Papier verkleinert; unterm Strich steht der
+   Inhalt in wahrer Groesse und vollstaendig auf dem Blatt. */
+function seitenmassSetzen(){
+  const k = druckSkala();
+  const b = (210 * k).toFixed(2), h = (297 * k).toFixed(2);
+  let st = document.getElementById('seitenmass');
+  if (!st){ st = document.createElement('style'); st.id = 'seitenmass'; document.head.appendChild(st); }
+  st.textContent = '@media print{'+
+    '@page{size:'+b+'mm '+h+'mm; margin:0}'+
+    'html,body{width:'+b+'mm !important; max-width:'+b+'mm !important}'+
+    '.druckseite{width:'+b+'mm !important; height:'+h+'mm !important}'+
+  '}';
+}
 function doPrint(html){
   druckModusBeenden();
+  seitenmassSetzen();
   $('#printHost').innerHTML = html;
   document.body.classList.add('printing-sheet');
   let printed = false;
