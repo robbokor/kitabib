@@ -3033,6 +3033,31 @@ function druckLeiste(art){
       '<p class="hint">Prüfbogen drucken, die schwarze Linie messen, den Wert hier eintragen. '+
       'KitaBib rechnet den Maßstab fort – nach einer, spätestens zwei Runden misst die Linie 100 mm.</p>'+
     '</div>'+
+    (() => {
+      /* Wird der Massstab hochgesetzt, weil das Geraet verkleinert, passt
+         irgendwann nicht mehr der ganze Bogen auf die bedruckbare Flaeche.
+         Das laesst sich nicht wegrechnen – also sagen wir es. */
+      const k = druckSkala();
+      const nutzbarB = 210 / k, nutzbarH = 297 / k;
+      const l = +format.luecke || 0, lY = +format.lueckeY || 0;
+      const gesamtB = format.spalten * format.breite + (format.spalten - 1) * l;
+      const gesamtH = format.zeilen * format.hoehe + (format.zeilen - 1) * lY;
+      const rX = format.randX != null ? +format.randX : (210 - gesamtB) / 2;
+      const rY = format.randY != null ? +format.randY : (297 - gesamtH) / 2;
+      const brauchtB = rX + gesamtB, brauchtH = rY + gesamtH;
+      if (brauchtB <= nutzbarB + 0.5 && brauchtH <= nutzbarH + 0.5) return '';
+      let passenSpalten = 0, x = rX;
+      while (x + format.breite <= nutzbarB + 0.5){ passenSpalten++; x += format.breite + l; }
+      let passenZeilen = 0, y = rY;
+      while (y + format.hoehe <= nutzbarH + 0.5){ passenZeilen++; y += format.hoehe + lY; }
+      return '<div class="notice overdue">'+icon('alert')+'<span><span class="n-title">Der Bogen passt nicht auf die bedruckbare Fläche</span>'+
+        '<span class="n-body">Bei '+Math.round(k*1000)/10+' % Maßstab bedruckt das Gerät nur '+
+        Math.round(nutzbarB)+' × '+Math.round(nutzbarH)+' mm der Seite. Davon werden '+
+        passenSpalten+' von '+format.spalten+' Spalten und '+passenZeilen+' von '+format.zeilen+' Zeilen erfasst – der Rest fällt weg. '+
+        'Das lässt sich nicht wegrechnen: Was das Gerät nicht bedruckt, kann keine Einstellung hinzaubern. '+
+        '<b>Etikettenbögen deshalb besser vom Rechner aus drucken</b> – dort im Druckdialog Ränder auf „keine" und Skalierung auf 100 % stellen, '+
+        'dann ist der Maßstab hier wieder 100 %. Das Tablet bleibt für alles andere.</span></span></div>';
+    })()+
     '<p class="hint">'+(art === 'etikett'
       ? 'Den Prüfbogen auf einfachem Papier drucken und gegen den Etikettenbogen halten – das kostet kein Etikett. '
       : 'Sitzt der erste Bogen daneben, mit der Feinjustierung verschieben. ')+
@@ -3973,7 +3998,7 @@ function etikettZelle(c, format){
    Drei Wege in den eigenen Bestand: ISBN-Liste (Daten kommen von der DNB),
    Tabelle fuer Buecher ohne ISBN, und eine vollstaendige Sicherung.
    ======================================================================== */
-var FASSUNG = '31.08.2026 · 13';
+var FASSUNG = '31.08.2026 · 14';
 var bestand = { isbnText:'', isbnLauf:null, isbnErgebnis:null, tabText:'', tabErgebnis:null, sicherung:null };
 
 function isbnListeLesen(text){
