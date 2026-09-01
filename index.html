@@ -4336,6 +4336,119 @@ var PdfVorlage = (function () {
   return { ausDatei:ausDatei, raster:raster, kaesten:kaesten };
 })();
 
+/* =========================================== Word-Vorlage lesen ===========
+   Manche Kita-Tablets lassen keine PDF zu, aber eine Word-Datei ist da. Auch
+   das geht ohne Fremdbibliothek: .docx ist ein ZIP mit XML, und beides kann
+   der Browser - der ZIP-Leser steckt schon in Tabelle, das XML nimmt der
+   DOMParser.
+
+   Word beschreibt einen Etikettenbogen als Tabelle. Die Spaltenbreiten stehen
+   im tblGrid, die Zeilenhoehen in trHeight, das Blatt in sectPr - alles in
+   Twips, also Zwanzigstel-Punkt. Die Luecken zwischen Etiketten sind je nach
+   Vorlage entweder schmale Zwischenspalten und -zeilen oder gar nicht
+   vorhanden; beide Bauarten kommen vor, also erkennt der Leser sie am
+   Wechsel breit-schmal-breit.
+   ======================================================================== */
+var WordVorlage = (function () {
+  var TWIP = 1440 / 25.4;                       /* Twips je Millimeter */
+  function mm(v){ return (+v || 0) / TWIP; }
+  function zahl(el, attr){
+    if (!el) return null;
+    var v = el.getAttributeNS('http://schemas.openxmlformats.org/wordprocessingml/2006/main', attr);
+    if (v === null) v = el.getAttribute('w:' + attr);
+    if (v === null) v = el.getAttribute(attr);
+    return v === null ? null : parseFloat(v);
+  }
+  function kinder(el, name){
+    return el ? Array.prototype.slice.call(el.getElementsByTagNameNS('*', name)) : [];
+  }
+  function median(a){ var s = a.slice().sort(function (x,y) { return x-y; }); var m = s.length>>1;
+    return s.length % 2 ? s[m] : (s[m-1]+s[m])/2; }
+
+  /* Wechseln breite und schmale Eintraege einander ab, sind die schmalen die
+     Luecken. Sonst liegen die Etiketten Kante an Kante. */
+  function teilen(werte){
+    if (!werte.length) return null;
+    var gross = median(werte.filter(function (v) { return v >= median(werte); }));
+    var schmal = werte.filter(function (v) { return v < gross * 0.55; });
+    if (schmal.length && schmal.length >= Math.floor(werte.length/2) - 1 && werte.length >= 3){
+      var breit = werte.filter(function (v) { return v >= gross * 0.55; });
+      return { anzahl:breit.length, mass:median(breit), luecke:median(schmal) };
+    }
+    return { anzahl:werte.length, mass:median(werte), luecke:0 };
+  }
+
+  function ausXml(xml){
+    var doc = new DOMParser().parseFromString(xml, 'application/xml');
+    if (doc.getElementsByTagName('parsererror').length) throw new Error('Die Word-Datei ist beschädigt.');
+
+    var seite = kinder(doc, 'pgSz')[0], rand = kinder(doc, 'pgMar')[0];
+    var blattB = seite ? mm(zahl(seite, 'w')) : 210;
+    var blattH = seite ? mm(zahl(seite, 'h')) : 297;
+    if (Math.abs(blattB-210) < 1.5) blattB = 210;
+    if (Math.abs(blattH-297) < 1.5) blattH = 297;
+    var randLinks = rand ? mm(zahl(rand, 'left')) : 0;
+    var randOben  = rand ? mm(zahl(rand, 'top'))  : 0;
+
+    var tabelle = kinder(doc, 'tbl')[0];
+    if (!tabelle) throw new Error('In der Word-Datei ist keine Tabelle zu finden. Etikettenvorlagen bestehen aus einer.');
+
+    var grid = kinder(kinder(tabelle, 'tblGrid')[0], 'gridCol').map(function (g) { return mm(zahl(g, 'w')); });
+    if (!grid.length){
+      /* Ohne tblGrid helfen die Zellbreiten der ersten Zeile weiter. */
+      var ersteZeile = kinder(tabelle, 'tr')[0];
+      grid = kinder(ersteZeile, 'tcW').map(function (t) { return mm(zahl(t, 'w')); });
+    }
+    grid = grid.filter(function (v) { return v > 0.2; });
+    if (grid.length < 1) throw new Error('Die Tabelle in der Word-Datei hat keine messbaren Spaltenbreiten.');
+
+    var reihen = kinder(tabelle, 'tr');
+    var hoehen = reihen.map(function (tr) {
+      var th = kinder(tr, 'trHeight')[0];
+      return th ? mm(zahl(th, 'val')) : 0;
+    });
+    var alleHoehen = hoehen.every(function (h) { return h > 0.2; });
+
+    var sp = teilen(grid);
+    var ze = alleHoehen ? teilen(hoehen) : { anzahl:reihen.length, mass:0, luecke:0 };
+    if (sp.anzahl < 1 || ze.anzahl < 2) throw new Error('Das ist keine Etikettentabelle – zu wenige Zeilen.');
+    if (sp.anzahl > 12 || ze.anzahl > 30) throw new Error('Die Tabelle passt nicht zu einem Etikettenbogen.');
+
+    var ind = kinder(kinder(tabelle, 'tblPr')[0], 'tblInd')[0];
+    var randX = randLinks + (ind ? mm(zahl(ind, 'w')) : 0);
+    var randY = randOben;
+
+    var breite = sp.mass, luecke = sp.luecke;
+    var hoehe = ze.mass, lueckeY = ze.luecke;
+    if (!(hoehe > 1)){
+      /* Word laesst Zeilenhoehen oft offen. Dann teilt sich die Restseite
+         gleichmaessig auf die Zeilen auf - genau wie Word es beim Drucken tut. */
+      hoehe = (blattH - 2*randY) / ze.anzahl;
+      lueckeY = 0;
+    }
+    var r = function (v) { return Math.round(v*20)/20; };
+    var gesamt = sp.anzahl*breite + (sp.anzahl-1)*luecke;
+    if (randX <= 0.2 && gesamt < blattB - 1) randX = (blattB - gesamt) / 2;
+    if (gesamt > blattB + 1.5) throw new Error('Die Tabelle ist breiter als das Blatt – das passt nicht zu einem Etikettenbogen.');
+
+    return { spalten:sp.anzahl, zeilen:ze.anzahl, breite:r(breite), hoehe:r(hoehe),
+      luecke:r(luecke), lueckeY:r(lueckeY), randX:r(Math.max(0, randX)), randY:r(Math.max(0, randY)),
+      gefunden:sp.anzahl*ze.anzahl, blattB:r(blattB), blattH:r(blattH), hoehenGeschaetzt:!alleHoehen };
+  }
+
+  function ausDatei(datei){
+    return datei.arrayBuffer().then(function (buf) {
+      var e;
+      try { e = Tabelle.zipEintraege(buf); }
+      catch (err) { throw new Error('Das ist keine .docx-Datei. Ältere .doc-Dateien kann KitaBib nicht lesen – in Word einmal als .docx speichern.'); }
+      var name = e['word/document.xml'];
+      if (!name) throw new Error('Das ist keine Word-Datei.');
+      return Tabelle.zipLesen(buf, name).then(ausXml);
+    });
+  }
+  return { ausDatei:ausDatei, ausXml:ausXml };
+})();
+
 /* =============================================== Bogenkatalog =============
    Wer eine Packung Etiketten kauft, hat eine Artikelnummer und eine Zahl auf
    der Schachtel - nicht acht Millimeterangaben. Der Katalog uebersetzt das eine
@@ -4430,7 +4543,7 @@ function formatBody(){
   const kopf =
     '<div class="toggle-row">'+
       '<button class="toggle" data-format-modus="nummer" aria-pressed="'+(formatFlow.modus==='nummer')+'">Artikelnummer</button>'+
-      '<button class="toggle" data-format-modus="pdf" aria-pressed="'+(formatFlow.modus==='pdf')+'">PDF-Vorlage</button>'+
+      '<button class="toggle" data-format-modus="pdf" aria-pressed="'+(formatFlow.modus==='pdf')+'">Vorlage-Datei</button>'+
     '</div>';
   if (formatFlow.modus === 'nummer'){
     return kopf+
@@ -4452,11 +4565,12 @@ function formatBody(){
   }
   const e = formatFlow.erkannt;
   return kopf+
-    '<p class="hint">Fast alle Hersteller bieten zu jeder Artikelnummer eine leere Vorlage als PDF an. '+
-      'Ladet sie hier hoch: KitaBib misst die Kästchen darin aus und übernimmt das Raster. '+
-      'Die Datei bleibt auf diesem Gerät.</p>'+
-    '<div class="field"><label for="pdfDatei">PDF-Vorlage wählen</label>'+
-      '<input id="pdfDatei" type="file" accept="application/pdf,.pdf" data-format-pdf></div>'+
+    '<p class="hint">Fast alle Hersteller bieten zu jeder Artikelnummer eine leere Vorlage an – '+
+      'als <b>PDF</b> oder als <b>Word-Datei</b>. Beides geht: KitaBib misst das Raster darin aus und übernimmt es. '+
+      'Die Datei bleibt auf diesem Gerät, es wird nichts verschickt.</p>'+
+    '<div class="field"><label for="pdfDatei">Vorlage wählen (.pdf oder .docx)</label>'+
+      '<input id="pdfDatei" type="file" accept="application/pdf,.pdf,.docx,'+
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document" data-format-pdf></div>'+
     (formatFlow.laeuft ? '<p class="hint">Wird gelesen …</p>' : '')+
     (formatFlow.fehler ? '<div class="notice overdue">'+icon('alert')+'<span><span class="n-body">'+esc(formatFlow.fehler)+'</span></span></div>' : '')+
     (e
@@ -4467,6 +4581,9 @@ function formatBody(){
         'Abstand '+String(e.luecke).replace('.',',')+' / '+String(e.lueckeY).replace('.',',')+' mm, '+
         'Rand '+String(e.randX).replace('.',',')+' / '+String(e.randY).replace('.',',')+' mm. '+
         'Blatt '+String(e.blattB).replace('.',',')+' × '+String(e.blattH).replace('.',',')+' mm.<br>'+
+        (e.hoehenGeschaetzt
+          ? '<b>Achtung:</b> In der Word-Datei stehen keine festen Zeilenhöhen. Die Höhe ist deshalb aus dem '+
+            'Blatt geteilt und kann danebenliegen – hier hilft der Prüfbogen besonders.<br>' : '')+
         'Vergleicht das mit eurer Packung, bevor ihr es übernehmt.</span></span></div>'
       : '');
 }
@@ -4634,7 +4751,7 @@ function etikettZelle(c, format){
    Drei Wege in den eigenen Bestand: ISBN-Liste (Daten kommen von der DNB),
    Tabelle fuer Buecher ohne ISBN, und eine vollstaendige Sicherung.
    ======================================================================== */
-var FASSUNG = '31.08.2026 · 25';
+var FASSUNG = '31.08.2026 · 26';
 var bestand = { isbnText:'', isbnLauf:null, isbnErgebnis:null, tabText:'', tabErgebnis:null, sicherung:null };
 
 function isbnListeLesen(text){
@@ -5345,7 +5462,7 @@ const ACTIONS = {
     const e = formatFlow.erkannt;
     if (!e) return;
     formatUebernehmen(e, String(e.breite).replace('.',',')+' × '+String(e.hoehe).replace('.',',')+
-      ' mm · '+(e.spalten*e.zeilen)+' je Bogen (aus PDF)');
+      ' mm · '+(e.spalten*e.zeilen)+' je Bogen (aus Vorlage)');
     closeSheet(); render();
     toast('Format übernommen – zur Sicherheit einmal den Prüfbogen drucken.');
   },
@@ -5787,7 +5904,8 @@ document.addEventListener('change', ev => {
     const datei = el.files && el.files[0];
     if (!datei) return;
     formatFlow.laeuft = true; formatFlow.fehler = null; formatFlow.erkannt = null; rerenderSheet();
-    PdfVorlage.ausDatei(datei).then(r => {
+    const wort = /\.docx$/i.test(datei.name) || /wordprocessingml/.test(datei.type || '');
+    (wort ? WordVorlage.ausDatei(datei) : PdfVorlage.ausDatei(datei)).then(r => {
       formatFlow.erkannt = r; formatFlow.datei = datei.name;
     }).catch(e => {
       formatFlow.fehler = e.message || 'Die PDF konnte nicht gelesen werden.';
