@@ -370,6 +370,10 @@ button.row:hover{background:var(--green-soft)}
   background:var(--card); border:1px solid var(--line-strong); border-radius:var(--r-m);
   padding:15px; box-shadow:var(--shadow); display:flex; flex-direction:column;
 }
+[data-format-katalog]{border:1px solid var(--line); border-radius:12px; background:var(--card);
+  padding:11px 14px; display:flex; gap:10px; cursor:pointer}
+[data-format-katalog]:hover{border-color:var(--green); background:var(--green-soft)}
+[data-format-katalog] .r-sub{display:block}
 .bogen-raster{display:grid; gap:6px; max-width:420px}
 .bogen-feld{
   aspect-ratio:5/3; border:1px solid var(--line-strong); border-radius:8px; background:var(--card);
@@ -3219,7 +3223,7 @@ function bogenKarte(art, format){
 /* Einstellungen, die beide Druckansichten teilen */
 function druckLeiste(art){
   const d = druckEinstellungen();
-  const liste = art === 'karte' ? KARTEN_FORMATE : ETIKETT_FORMATE;
+  const liste = art === 'karte' ? KARTEN_FORMATE : etikettListe();
   const aktuell = art === 'karte' ? d.karte : d.etikett;
   const format = art === 'karte' ? formatFinden(KARTEN_FORMATE, d.karte) : etikettFormat();
   const eigenAktiv = art === 'etikett' && aktuell === 'eigen';
@@ -3233,6 +3237,12 @@ function druckLeiste(art){
       '<select class="pill" id="druckFormat" data-druck-format="'+art+'">'+
       liste.map(f => '<option value="'+f.id+'"'+(f.id===aktuell?' selected':'')+'>'+esc(f.name)+'</option>').join('')+
       '</select></div>'+
+    (art === 'etikett'
+      ? '<div class="btn-row">'+
+          '<button class="btn btn-sm" data-act="format-hinzufuegen">'+icon('plus')+'Format hinzufügen</button>'+
+          (format.meins ? '<button class="btn btn-sm" data-act="format-loeschen">Dieses Format löschen</button>' : '')+
+        '</div>'
+      : '')+
     (eigenAktiv
       ? '<div class="grid-2">'+
           feld('breite','Etikett breit (mm)', e.breite)+ feld('hoehe','Etikett hoch (mm)', e.hoehe)+
@@ -4128,9 +4138,346 @@ var ETIKETT_FORMATE = [
     luecke:0,   lueckeY:0 },
   { id:'eigen',  name:'Eigenes Format (selbst ausmessen)', eigen:true }
 ];
+/* ============================================ PDF-Vorlage lesen ===========
+   Eine Etikettenvorlage ist im Grunde eine Seite voller gleich grosser
+   Rechtecke. Die stehen als Zeichenbefehle im Inhaltsstrom der PDF, meist
+   Flate-gepackt - und entpacken kann der Browser selbst, dieselbe Technik wie
+   beim Einlesen von .xlsx. Also: Stroeme entpacken, Rechtecke einsammeln,
+   daraus das Raster ableiten.
+
+   Die Feinheit steckt in der Strichbreite. Sie sitzt innerhalb des Umrisses und
+   macht jedes gemessene Etikett etwas zu klein und jede Luecke ebenso zu gross;
+   die Teilung von Kasten zu Kasten bleibt davon unberuehrt. Da derselbe Strich
+   in beiden Richtungen gilt und Boegen nur eine Handvoll uebliche Abstaende
+   benutzen, ist die Aufteilung eindeutig bestimmbar - gesucht ist das Paar von
+   Abstaenden, das waagerecht wie senkrecht dieselbe Strichbreite ergibt.
+   ======================================================================== */
+var PdfVorlage = (function () {
+  function alsText(bytes){
+    var teile = [], n = 32768;
+    for (var i = 0; i < bytes.length; i += n)
+      teile.push(String.fromCharCode.apply(null, bytes.subarray(i, i + n)));
+    return teile.join('');
+  }
+  function entpacken(bytes, art){
+    if (typeof DecompressionStream === 'undefined') return Promise.resolve(null);
+    try {
+      var strom = new Blob([bytes]).stream().pipeThrough(new DecompressionStream(art));
+      return new Response(strom).arrayBuffer()
+        .then(function (b) { return new Uint8Array(b); })
+        .catch(function () { return null; });
+    } catch (e) { return Promise.resolve(null); }
+  }
+
+  function stroeme(bytes, text){
+    var stellen = [], i = 0;
+    while ((i = text.indexOf('stream', i)) >= 0){
+      var kopf = text.slice(Math.max(0, i - 700), i);
+      var a = i + 6;
+      if (text.charCodeAt(a) === 13) a++;
+      if (text.charCodeAt(a) === 10) a++;
+      var e = text.indexOf('endstream', a);
+      if (e < 0) break;
+      /* Der Browser-Entpacker ist streng: schon der Zeilenumbruch vor
+         'endstream' laesst ihn abbrechen. Deshalb zaehlt die im PDF vermerkte
+         Laenge, und sonst wird hinten sauber abgeschnitten. */
+      var lg = kopf.match(/\/Length\s+(\d+)(?!\s+\d+\s+R)/);
+      var ende = e;
+      if (lg && +lg[1] > 0 && a + +lg[1] <= e) ende = a + +lg[1];
+      else while (ende > a && ' \t\r\n'.indexOf(text[ende-1]) >= 0) ende--;
+      stellen.push({ a:a, e:ende, flate:/\/FlateDecode/.test(kopf), anderer:/\/Filter/.test(kopf) });
+      i = e + 9;
+    }
+    var raus = [];
+    return stellen.reduce(function (kette, st) {
+      return kette.then(function () {
+        var roh = bytes.subarray(st.a, st.e);
+        if (!st.flate){ if (!st.anderer) raus.push(alsText(roh)); return; }
+        return entpacken(roh, 'deflate').then(function (aus) {
+          return aus ? aus : entpacken(roh, 'deflate-raw');
+        }).then(function (aus) { if (aus) raus.push(alsText(aus)); });
+      });
+    }, Promise.resolve()).then(function () { return raus; });
+  }
+
+  function mul(m, n){
+    return [ m[0]*n[0]+m[1]*n[2], m[0]*n[1]+m[1]*n[3],
+             m[2]*n[0]+m[3]*n[2], m[2]*n[1]+m[3]*n[3],
+             m[4]*n[0]+m[5]*n[2]+n[4], m[4]*n[1]+m[5]*n[3]+n[5] ];
+  }
+  function pkt(m, x, y){ return [ m[0]*x+m[2]*y+m[4], m[1]*x+m[3]*y+m[5] ]; }
+
+  function kaesten(inhalt){
+    var tok = inhalt.match(/[-+]?(?:\d+\.?\d*|\.\d+)|\/[^\s\/\[\]<>()]+|[A-Za-z'"*]+|[\[\]]/g) || [];
+    var ctm = [1,0,0,1,0,0], stapel = [], zahlen = [], pfad = [], raus = [];
+    function merke(pts){
+      if (!pts.length) return;
+      var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (var i = 0; i < pts.length; i++){
+        if (pts[i][0] < x0) x0 = pts[i][0];
+        if (pts[i][0] > x1) x1 = pts[i][0];
+        if (pts[i][1] < y0) y0 = pts[i][1];
+        if (pts[i][1] > y1) y1 = pts[i][1];
+      }
+      raus.push({ x:x0, y:y0, b:x1-x0, h:y1-y0 });
+    }
+    for (var i = 0; i < tok.length; i++){
+      var t = tok[i], z;
+      if (/^[-+.\d]/.test(t)){ zahlen.push(parseFloat(t)); if (zahlen.length > 8) zahlen.shift(); continue; }
+      if (t === 'q') stapel.push(ctm.slice());
+      else if (t === 'Q') ctm = stapel.pop() || [1,0,0,1,0,0];
+      else if (t === 'cm'){ if (zahlen.length >= 6) ctm = mul(zahlen.slice(-6), ctm); }
+      else if (t === 're'){ if (zahlen.length >= 4){ z = zahlen.slice(-4);
+        merke([pkt(ctm,z[0],z[1]), pkt(ctm,z[0]+z[2],z[1]), pkt(ctm,z[0],z[1]+z[3]), pkt(ctm,z[0]+z[2],z[1]+z[3])]); } }
+      else if (t === 'm' || t === 'l'){ if (zahlen.length >= 2)
+        pfad.push(pkt(ctm, zahlen[zahlen.length-2], zahlen[zahlen.length-1])); }
+      else if (t === 'c'){ if (zahlen.length >= 6){ z = zahlen.slice(-6);
+        pfad.push(pkt(ctm,z[0],z[1]), pkt(ctm,z[2],z[3]), pkt(ctm,z[4],z[5])); } }
+      else if (t === 'v' || t === 'y'){ if (zahlen.length >= 4){ z = zahlen.slice(-4);
+        pfad.push(pkt(ctm,z[0],z[1]), pkt(ctm,z[2],z[3])); } }
+      else if ('S s f F B b n'.indexOf(t) >= 0 || t === 'f*' || t === 'B*' || t === 'b*'){ merke(pfad); pfad = []; }
+      if (t !== 'h') zahlen = [];
+    }
+    return raus;
+  }
+
+  function median(a){ var s = a.slice().sort(function (x,y) { return x-y; }); var m = s.length >> 1;
+    return s.length % 2 ? s[m] : (s[m-1]+s[m])/2; }
+  function gruppen(werte, tol){
+    var s = werte.slice().sort(function (a,b) { return a-b; }), g = [], cur = [s[0]];
+    for (var i = 1; i < s.length; i++){
+      if (s[i] - cur[cur.length-1] <= tol) cur.push(s[i]);
+      else { g.push(median(cur)); cur = [s[i]]; }
+    }
+    g.push(median(cur));
+    return g;
+  }
+  function haeufigste(werte, tol){
+    var g = gruppen(werte, tol), best = g[0], n = 0;
+    g.forEach(function (m) {
+      var k = werte.filter(function (v) { return Math.abs(v-m) <= tol; }).length;
+      if (k > n){ n = k; best = m; }
+    });
+    return best;
+  }
+
+  var UEBLICH = [0, 2, 2.5, 3, 3.2, 4, 5];
+
+  function raster(alle, seiteB, seiteH){
+    var MM = 25.4/72;
+    var blattB = seiteB*MM, blattH = seiteH*MM;
+    if (Math.abs(blattB-210) < 1.2) blattB = 210;
+    if (Math.abs(blattH-297) < 1.2) blattH = 297;
+    var gesehen = {};
+    var k = alle.map(function (o) { return { x:o.x*MM, y:(seiteH-(o.y+o.h))*MM, b:o.b*MM, h:o.h*MM }; })
+      .filter(function (o) { return o.b > 12 && o.h > 6 && o.b < blattB-1 && o.h < blattH-1; })
+      .filter(function (o) {
+        var s = [o.x,o.y,o.b,o.h].map(function (v) { return Math.round(v*4); }).join(',');
+        if (gesehen[s]) return false; gesehen[s] = 1; return true;
+      });
+    if (k.length < 4) return null;
+
+    var zielB = haeufigste(k.map(function (o) { return o.b; }), 0.8);
+    var zielH = haeufigste(k.map(function (o) { return o.h; }), 0.8);
+    var feld = k.filter(function (o) { return Math.abs(o.b-zielB) <= 0.8 && Math.abs(o.h-zielH) <= 0.8; });
+    if (feld.length < 4) return null;
+
+    var xs = gruppen(feld.map(function (o) { return o.x; }), 1.5);
+    var ys = gruppen(feld.map(function (o) { return o.y; }), 1.5);
+    var spalten = xs.length, zeilen = ys.length;
+    if (spalten*zeilen < 4 || spalten > 12 || zeilen > 30) return null;
+    if (feld.length < spalten*zeilen*0.6) return null;
+
+    var teilX = spalten > 1 ? (xs[spalten-1]-xs[0])/(spalten-1) : zielB;
+    var teilY = zeilen  > 1 ? (ys[zeilen-1] -ys[0]) /(zeilen-1)  : zielH;
+
+    var luecke = Math.max(0, teilX-zielB), lueckeY = Math.max(0, teilY-zielH), beste = 1e9;
+    UEBLICH.forEach(function (lx) {
+      var sx = teilX - zielB - lx;
+      if (sx < -0.15 || sx > 0.8 || teilX-lx < 5) return;
+      UEBLICH.forEach(function (ly) {
+        var sy = teilY - zielH - ly;
+        if (sy < -0.15 || sy > 0.8 || teilY-ly < 4) return;
+        if (Math.abs(sx-sy) < beste){ beste = Math.abs(sx-sy); luecke = lx; lueckeY = ly; }
+      });
+    });
+    var breite = teilX - luecke, hoehe = teilY - lueckeY;
+    var randX = xs[0], randY = ys[0];
+    var mittigX = (blattB - spalten*breite - (spalten-1)*luecke)/2;
+    var mittigY = (blattH - zeilen*hoehe  - (zeilen-1)*lueckeY)/2;
+    if (mittigX >= -0.2 && Math.abs(mittigX-randX) <= 1.2) randX = Math.max(0, mittigX);
+    if (mittigY >= -0.2 && Math.abs(mittigY-randY) <= 1.5) randY = Math.max(0, mittigY);
+
+    var r = function (v) { return Math.round(v*20)/20; };
+    return { spalten:spalten, zeilen:zeilen, breite:r(breite), hoehe:r(hoehe),
+      luecke:r(luecke), lueckeY:r(lueckeY), randX:r(randX), randY:r(randY),
+      gefunden:feld.length, blattB:r(blattB), blattH:r(blattH) };
+  }
+
+  function ausDatei(datei){
+    return datei.arrayBuffer().then(function (ab) {
+      var bytes = new Uint8Array(ab);
+      var text = alsText(bytes);
+      if (text.slice(0, 5) !== '%PDF-') throw new Error('Das ist keine PDF-Datei.');
+      if (/\/Encrypt\b/.test(text)) throw new Error('Die PDF ist geschützt – KitaBib kann sie nicht lesen.');
+      var mb = text.match(/MediaBox\s*\[\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/);
+      var B = mb ? Math.abs(+mb[3] - +mb[1]) : 595.276;
+      var H = mb ? Math.abs(+mb[4] - +mb[2]) : 841.89;
+      return stroeme(bytes, text).then(function (liste) {
+        var alle = [];
+        liste.forEach(function (st) { if (/\sre\s|\sc\s|\sl\s/.test(st)) alle = alle.concat(kaesten(st)); });
+        if (!alle.length) throw new Error('In der PDF sind keine gezeichneten Kästchen zu finden.');
+        var r = raster(alle, B, H);
+        if (!r) throw new Error('Kein gleichmäßiges Etikettenraster erkannt. Passt die Datei zu einem Etikettenbogen?');
+        return r;
+      });
+    });
+  }
+  return { ausDatei:ausDatei, raster:raster, kaesten:kaesten };
+})();
+
+/* =============================================== Bogenkatalog =============
+   Wer eine Packung Etiketten kauft, hat eine Artikelnummer und eine Zahl auf
+   der Schachtel - nicht acht Millimeterangaben. Der Katalog uebersetzt das eine
+   ins andere. Die Nummern sind Suchhilfen; verlaesslich ist die Geometrie, und
+   die steht bei jedem Treffer dabei, damit sie sich mit der Packung vergleichen
+   laesst. Jeder Eintrag geht rechnerisch genau auf A4 auf - geprueft wird das
+   in katalogPruefen(). */
+var ETIKETT_KATALOG = [
+  { b:105,  h:148.5, sp:2, ze:2,  lu:0,   luY:0, rx:0,    ry:0,     nr:'3655 L7168' },
+  { b:105,  h:99,    sp:2, ze:3,  lu:0,   luY:0, rx:0,    ry:0,     nr:'3427' },
+  { b:105,  h:74.25, sp:2, ze:4,  lu:0,   luY:0, rx:0,    ry:0,     nr:'3426' },
+  { b:105,  h:59.4,  sp:2, ze:5,  lu:0,   luY:0, rx:0,    ry:0,     nr:'3425' },
+  { b:105,  h:49.5,  sp:2, ze:6,  lu:0,   luY:0, rx:0,    ry:0,     nr:'3424' },
+  { b:105,  h:42.3,  sp:2, ze:7,  lu:0,   luY:0, rx:0,    ry:0.45,  nr:'3423' },
+  { b:105,  h:37.125,sp:2, ze:8,  lu:0,   luY:0, rx:0,    ry:0,     nr:'3422' },
+  { b:105,  h:29.7,  sp:2, ze:10, lu:0,   luY:0, rx:0,    ry:0,     nr:'3421' },
+  { b:99.1, h:139,   sp:2, ze:2,  lu:2.5, luY:0, rx:4.65, ry:9.5,   nr:'L7169' },
+  { b:99.1, h:93.1,  sp:2, ze:3,  lu:2.5, luY:0, rx:4.65, ry:8.85,  nr:'L7166' },
+  { b:99.1, h:67.7,  sp:2, ze:4,  lu:2.5, luY:0, rx:4.65, ry:13.1,  nr:'L7165' },
+  { b:99.1, h:38.1,  sp:2, ze:7,  lu:2.5, luY:0, rx:4.65, ry:15.15, nr:'L7163 3484' },
+  { b:99.1, h:33.9,  sp:2, ze:8,  lu:2.5, luY:0, rx:4.65, ry:12.9,  nr:'L7162 3483' },
+  { b:96,   h:50.8,  sp:2, ze:5,  lu:2.5, luY:0, rx:7.75, ry:21.5,  nr:'L7168A' },
+  { b:88.9, h:33.8,  sp:2, ze:8,  lu:2.5, luY:0, rx:14.85,ry:13.3,  nr:'L7156' },
+  { b:70,   h:42.3,  sp:3, ze:7,  lu:0,   luY:0, rx:0,    ry:0.45,  nr:'3420' },
+  { b:70,   h:37,    sp:3, ze:8,  lu:0,   luY:0, rx:0,    ry:0.5,   nr:'3475' },
+  { b:70,   h:32,    sp:3, ze:9,  lu:0,   luY:0, rx:0,    ry:4.5,   nr:'3480' },
+  { b:70,   h:29.7,  sp:3, ze:10, lu:0,   luY:0, rx:0,    ry:0,     nr:'3489' },
+  { b:64.6, h:33.8,  sp:3, ze:8,  lu:2.5, luY:0, rx:5.6,  ry:13.3,  nr:'L7165A' },
+  { b:63.5, h:38.1,  sp:3, ze:7,  lu:2.5, luY:0, rx:7.25, ry:15.15, nr:'L7160 3474 3652' },
+  { b:63.5, h:33.9,  sp:3, ze:8,  lu:2.5, luY:0, rx:7.25, ry:12.9,  nr:'L7159 3425A' },
+  { b:63.5, h:29.6,  sp:3, ze:9,  lu:2.5, luY:0, rx:7.25, ry:15.3,  nr:'L7157' },
+  { b:52.5, h:29.7,  sp:4, ze:10, lu:0,   luY:0, rx:0,    ry:0,     nr:'3474A' },
+  { b:52.5, h:21.2,  sp:4, ze:14, lu:0,   luY:0, rx:0,    ry:0.1,   nr:'3667A' },
+  { b:48.5, h:25.4,  sp:4, ze:10, lu:2.5, luY:0, rx:4.25, ry:21.5,  nr:'3669 L7656' },
+  { b:48.5, h:16.9,  sp:4, ze:16, lu:2.5, luY:0, rx:4.25, ry:13.3,  nr:'3667 L7654A' },
+  { b:45.7, h:25.4,  sp:4, ze:10, lu:2.5, luY:0, rx:9.85, ry:21.5,  nr:'L7654 3668' },
+  { b:45.7, h:21.2,  sp:4, ze:12, lu:2.5, luY:0, rx:9.85, ry:21.3,  nr:'L7636' },
+  { b:38.1, h:21.2,  sp:5, ze:13, lu:2.5, luY:0, rx:4.75, ry:10.7,  nr:'L7651 3651' }
+];
+function katalogPruefen(){
+  return ETIKETT_KATALOG.map(function (k) {
+    var breite = k.sp*k.b + (k.sp-1)*k.lu + 2*k.rx;
+    var hoehe  = k.ze*k.h + (k.ze-1)*k.luY + 2*k.ry;
+    return { name:katalogName(k), breite:Math.round(breite*100)/100, hoehe:Math.round(hoehe*100)/100,
+             passt: Math.abs(breite-210) < 0.15 && Math.abs(hoehe-297) < 0.15 };
+  });
+}
+function katalogName(k){
+  var z = function (v) { return String(Math.round(v*100)/100).replace('.', ','); };
+  return z(k.b)+' × '+z(k.h)+' mm · '+(k.sp*k.ze)+' je Bogen';
+}
+function katalogSuche(text){
+  var q = String(text||'').toLowerCase().replace(/[.,]/g, '').trim();
+  if (!q) return ETIKETT_KATALOG.slice();
+  var teile = q.split(/\s+/);
+  return ETIKETT_KATALOG.filter(function (k) {
+    var heu = (k.nr+' '+katalogName(k)+' '+k.sp+'x'+k.ze+' '+(k.sp*k.ze)).toLowerCase().replace(/[.,]/g, '');
+    return teile.every(function (t) { return heu.indexOf(t) >= 0; });
+  });
+}
+
+/* Eigene und uebernommene Formate liegen neben den eingebauten. */
+function eigeneFormate(){
+  const d = druckEinstellungen();
+  if (!Array.isArray(d.eigene)) d.eigene = [];
+  return d.eigene;
+}
+function etikettListe(){
+  const fest = ETIKETT_FORMATE.filter(function (f) { return !f.eigen; });
+  const meine = eigeneFormate().map(function (f) {
+    return { id:f.id, name:f.name, breite:+f.breite, hoehe:+f.hoehe, spalten:+f.spalten, zeilen:+f.zeilen,
+             luecke:+f.luecke||0, lueckeY:+f.lueckeY||0, randX:+f.randX||0, randY:+f.randY||0, meins:true };
+  });
+  return fest.concat(meine, ETIKETT_FORMATE.filter(function (f) { return f.eigen; }));
+}
+function formatUebernehmen(mass, name){
+  const d = druckEinstellungen();
+  const liste = eigeneFormate();
+  const id = 'f' + Date.now().toString(36);
+  liste.push({ id:id, name:name, breite:mass.breite, hoehe:mass.hoehe, spalten:mass.spalten, zeilen:mass.zeilen,
+    luecke:mass.luecke||0, lueckeY:mass.lueckeY||0, randX:mass.randX||0, randY:mass.randY||0 });
+  d.etikett = id;
+  delete d.geraetGeprueft;              /* neues Raster, alte Feldmeldungen gelten nicht */
+  save();
+  return id;
+}
+
+var formatFlow = { modus:'nummer', suche:'', erkannt:null, fehler:null, datei:'', laeuft:false };
+
+function formatBody(){
+  const treffer = katalogSuche(formatFlow.suche).slice(0, 14);
+  const kopf =
+    '<div class="toggle-row">'+
+      '<button class="toggle" data-format-modus="nummer" aria-pressed="'+(formatFlow.modus==='nummer')+'">Artikelnummer</button>'+
+      '<button class="toggle" data-format-modus="pdf" aria-pressed="'+(formatFlow.modus==='pdf')+'">PDF-Vorlage</button>'+
+    '</div>';
+  if (formatFlow.modus === 'nummer'){
+    return kopf+
+      '<div class="field"><label for="katSuche">Artikelnummer, Stückzahl oder Maß</label>'+
+        '<input id="katSuche" data-format-suche placeholder="z. B. L7160, 65, 63,5" value="'+esc(formatFlow.suche)+'"></div>'+
+      '<p class="hint">Die Nummern sind Suchhilfen – maßgeblich ist, ob die Angaben unter dem Treffer '+
+        'zu eurer Packung passen. Sucht sonst nach der Stückzahl, die vorn auf der Schachtel steht.</p>'+
+      (treffer.length
+        ? '<div class="stack" style="gap:8px">'+treffer.map(function (k) {
+            const i = ETIKETT_KATALOG.indexOf(k);
+            return '<button class="r-row" data-format-katalog="'+i+'" style="width:100%;text-align:left">'+
+              '<div style="flex:1;min-width:0"><span class="r-title">'+esc(katalogName(k))+'</span>'+
+              '<span class="r-sub">'+k.sp+' Spalten × '+k.ze+' Zeilen · Abstand '+
+                String(k.lu).replace('.',',')+' / '+String(k.luY).replace('.',',')+' mm · '+
+                'Rand '+String(k.rx).replace('.',',')+' / '+String(k.ry).replace('.',',')+' mm'+
+              '</span><span class="r-sub">'+esc(k.nr.split(' ').join(' · '))+'</span></div></button>';
+          }).join('')+'</div>'
+        : '<p class="hint">Nichts gefunden. Sucht nach der Stückzahl je Bogen – oder nehmt die PDF-Vorlage.</p>');
+  }
+  const e = formatFlow.erkannt;
+  return kopf+
+    '<p class="hint">Fast alle Hersteller bieten zu jeder Artikelnummer eine leere Vorlage als PDF an. '+
+      'Ladet sie hier hoch: KitaBib misst die Kästchen darin aus und übernimmt das Raster. '+
+      'Die Datei bleibt auf diesem Gerät.</p>'+
+    '<div class="field"><label for="pdfDatei">PDF-Vorlage wählen</label>'+
+      '<input id="pdfDatei" type="file" accept="application/pdf,.pdf" data-format-pdf></div>'+
+    (formatFlow.laeuft ? '<p class="hint">Wird gelesen …</p>' : '')+
+    (formatFlow.fehler ? '<div class="notice overdue">'+icon('alert')+'<span><span class="n-body">'+esc(formatFlow.fehler)+'</span></span></div>' : '')+
+    (e
+      ? '<div class="notice calm">'+icon('check')+'<span><span class="n-title">'+esc(formatFlow.datei)+'</span>'+
+        '<span class="n-body">'+e.gefunden+' Kästchen gefunden · <b>'+
+        String(e.breite).replace('.',',')+' × '+String(e.hoehe).replace('.',',')+' mm</b>, '+
+        e.spalten+' × '+e.zeilen+' = '+(e.spalten*e.zeilen)+' je Bogen.<br>'+
+        'Abstand '+String(e.luecke).replace('.',',')+' / '+String(e.lueckeY).replace('.',',')+' mm, '+
+        'Rand '+String(e.randX).replace('.',',')+' / '+String(e.randY).replace('.',',')+' mm. '+
+        'Blatt '+String(e.blattB).replace('.',',')+' × '+String(e.blattH).replace('.',',')+' mm.<br>'+
+        'Vergleicht das mit eurer Packung, bevor ihr es übernehmt.</span></span></div>'
+      : '');
+}
+function formatFoot(){
+  if (formatFlow.modus !== 'pdf' || !formatFlow.erkannt) return '';
+  return '<button class="btn btn-primary" data-act="format-pdf-uebernehmen">Format übernehmen</button>';
+}
+
 function etikettFormat(){
   const d = druckEinstellungen();
-  const f = formatFinden(ETIKETT_FORMATE, d.etikett);
+  const f = formatFinden(etikettListe(), d.etikett);
   if (!f.eigen) return f;
   const e = d.eigenes || (d.eigenes = { breite:70, hoehe:37, spalten:3, zeilen:8, luecke:0, lueckeY:0, randX:0, randY:0 });
   return { id:'eigen', name:'Eigenes Format · '+e.breite+' × '+e.hoehe+' mm · '+(e.spalten*e.zeilen)+' je Bogen',
@@ -4287,7 +4634,7 @@ function etikettZelle(c, format){
    Drei Wege in den eigenen Bestand: ISBN-Liste (Daten kommen von der DNB),
    Tabelle fuer Buecher ohne ISBN, und eine vollstaendige Sicherung.
    ======================================================================== */
-var FASSUNG = '31.08.2026 · 24';
+var FASSUNG = '31.08.2026 · 25';
 var bestand = { isbnText:'', isbnLauf:null, isbnErgebnis:null, tabText:'', tabErgebnis:null, sicherung:null };
 
 function isbnListeLesen(text){
@@ -4990,6 +5337,27 @@ const ACTIONS = {
       toast('Sicherung eingespielt.');
     });
   },
+  'format-hinzufuegen': () => {
+    formatFlow = { modus:'nummer', suche:'', erkannt:null, fehler:null, datei:'', laeuft:false };
+    openSheet({ title:'Bogenformat hinzufügen', body:formatBody, foot:formatFoot });
+  },
+  'format-pdf-uebernehmen': () => {
+    const e = formatFlow.erkannt;
+    if (!e) return;
+    formatUebernehmen(e, String(e.breite).replace('.',',')+' × '+String(e.hoehe).replace('.',',')+
+      ' mm · '+(e.spalten*e.zeilen)+' je Bogen (aus PDF)');
+    closeSheet(); render();
+    toast('Format übernommen – zur Sicherheit einmal den Prüfbogen drucken.');
+  },
+  'format-loeschen': () => {
+    const d = druckEinstellungen();
+    const i = eigeneFormate().findIndex(f => f.id === d.etikett);
+    if (i < 0){ toast('Dieses Format ist fest eingebaut.'); return; }
+    eigeneFormate().splice(i, 1);
+    d.etikett = ETIKETT_FORMATE[0].id;
+    save(); render();
+    toast('Format gelöscht.');
+  },
   'geraet-zuruecksetzen': () => {
     const d = druckEinstellungen();
     delete d.geraetGeprueft;
@@ -5061,11 +5429,22 @@ document.addEventListener('click', ev => {
     '[data-dlg-wahl],[data-copy-status],[data-anonymisieren],[data-rolle],[data-pick-copy],[data-pick-return],'+
     '[data-karte],[data-kartenfeld],[data-zeichen-aendern],[data-zeichen-waehlen],[data-etikett-filter],'+
     '[data-gruppenkonto],[data-gruppenkonto-weg],[data-import-ziel],[data-kat-umbenennen],[data-kat-loeschen],'+
-    '[data-bogen-feld],[data-bogen-art],[data-bogen-modus],[data-bogen-spalte],[data-bogen-zeile]');
+    '[data-bogen-feld],[data-bogen-art],[data-bogen-modus],[data-bogen-spalte],[data-bogen-zeile],'+
+    '[data-format-modus],[data-format-katalog]');
   if (!el) return;
   const d = el.dataset;
   if (d.bogenArt) ereignisArt = d.bogenArt;
 
+  if (d.formatModus){ formatFlow.modus = d.formatModus; formatFlow.fehler = null; rerenderSheet(); return; }
+  if (d.formatKatalog !== undefined && el.hasAttribute('data-format-katalog')){
+    const k = ETIKETT_KATALOG[+d.formatKatalog];
+    if (!k) return;
+    formatUebernehmen({ breite:k.b, hoehe:k.h, spalten:k.sp, zeilen:k.ze,
+      luecke:k.lu, lueckeY:k.luY, randX:k.rx, randY:k.ry }, katalogName(k));
+    closeSheet(); render();
+    toast('Format übernommen – zur Sicherheit einmal den Prüfbogen drucken.');
+    return;
+  }
   if (d.bogenModus){ bogenModus = d.bogenModus; render(); return; }
 
   if (d.bogenSpalte !== undefined && el.hasAttribute('data-bogen-spalte')){
@@ -5371,6 +5750,7 @@ document.addEventListener('input', ev => {
   if (el.id === 'libSearch'){ lib.q = el.value; render(); return; }
   if (el.id === 'childSearch'){ flow.q = el.value; rerenderSheet(); return; }
   if (el.id === 'buchSuche'){ flow.qBuch = el.value; rerenderSheet(); return; }
+  if (el.hasAttribute('data-format-suche')){ formatFlow.suche = el.value; rerenderSheet(); return; }
   if (el.hasAttribute('data-roll-csv')){ roll.csv = el.value; return; }
   if (d.draft && flow && flow.draft){ flow.draft[d.draft] = el.value; return; }
   if (d.druckOff){ const e = druckEinstellungen(); e[d.druckOff] = parseFloat(el.value) || 0; save(); return; }
@@ -5403,6 +5783,17 @@ document.addEventListener('input', ev => {
 });
 document.addEventListener('change', ev => {
   const el = ev.target, d = el.dataset;
+  if (el.hasAttribute && el.hasAttribute('data-format-pdf')){
+    const datei = el.files && el.files[0];
+    if (!datei) return;
+    formatFlow.laeuft = true; formatFlow.fehler = null; formatFlow.erkannt = null; rerenderSheet();
+    PdfVorlage.ausDatei(datei).then(r => {
+      formatFlow.erkannt = r; formatFlow.datei = datei.name;
+    }).catch(e => {
+      formatFlow.fehler = e.message || 'Die PDF konnte nicht gelesen werden.';
+    }).then(() => { formatFlow.laeuft = false; rerenderSheet(); });
+    return;
+  }
   if (d.druckMarke){
     const wert = parseFloat(el.value);
     if (!isFinite(wert) || wert < 0 || wert > 80){ toast('Bitte den gemessenen Abstand in mm eintragen (0 bis 80).'); return; }
