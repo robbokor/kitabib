@@ -1,0 +1,1369 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Zimmerauslosung">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#FBF9F5">
+<meta name="color-scheme" content="light">
+<title>Zimmerauslosung</title>
+<style>
+/* Zimmerauslosung · Die Ziehung passiert mit echten Kugeln auf dem Tisch.
+   Dieses Programm zaehlt mit, prueft und schreibt auf – es wuerfelt nicht.
+   Eine Datei, kein Server, keine Abhaengigkeiten. */
+:root{
+  --paper:#FBF9F5; --sunk:#F3F0E9; --card:#FFFFFF; --card-2:#FDFCF9;
+  --ink:#333F38; --ink-2:#68746C; --ink-3:#8A968E;
+  --line:#EDE8DE; --line-strong:#DCD5C8;
+
+  --green:#9ED4B4; --green-hover:#8CC9A6; --green-on:#22503A;
+  --green-soft:#E8F3EC; --green-line:#C6E2D2; --green-deep:#457C61;
+
+  --blue-soft:#E7EFF6; --blue-line:#CBDEEC; --blue-ink:#3B5F7B;
+  --peach-soft:#FBEBDB; --peach-line:#F1D5B7; --peach-ink:#8A5A2C;
+  --rose-soft:#FBE5E5; --rose-line:#F2C8C9; --rose-ink:#9C444C;
+  --lilac-soft:#F0E9F7; --lilac-line:#DED0EC; --lilac-ink:#6B5090;
+
+  --shadow:0 1px 2px rgba(83,101,89,.05), 0 10px 24px -16px rgba(70,90,76,.30);
+  --shadow-lift:0 2px 6px rgba(83,101,89,.07), 0 22px 44px -22px rgba(70,90,76,.42);
+  --r-s:14px; --r-m:20px; --r-l:28px;
+  --ui:system-ui, -apple-system, "Segoe UI", "Nunito Sans", sans-serif;
+  --display:"Avenir Next", "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:var(--ui); font-size:17px; line-height:1.55;
+  -webkit-font-smoothing:antialiased; -webkit-text-size-adjust:100%;
+  padding-bottom:env(safe-area-inset-bottom);
+}
+h1,h2,h3{font-family:var(--display); margin:0; letter-spacing:.2px}
+h1{font-size:26px; font-weight:700}
+h2{font-size:21px; font-weight:700}
+h3{font-size:17px; font-weight:600}
+p{margin:0 0 10px}
+button{font:inherit; color:inherit}
+input,select,textarea{font:inherit; color:inherit}
+.muted{color:var(--ink-2)}
+.small{font-size:14px}
+.tiny{font-size:13px}
+.nowrap{white-space:nowrap}
+.hidden{display:none !important}
+
+/* ---------- Geruest ---------- */
+.top{
+  position:sticky; top:0; z-index:30; background:rgba(251,249,245,.92);
+  backdrop-filter:saturate(140%) blur(8px); border-bottom:1px solid var(--line);
+  padding:calc(10px + env(safe-area-inset-top)) 16px 10px;
+}
+.top-in{max-width:1080px; margin:0 auto; display:flex; align-items:center; gap:12px}
+.top-title{flex:1; min-width:0}
+.top-title .sub{font-size:13px; color:var(--ink-2); margin-top:-2px;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+main{max-width:1080px; margin:0 auto; padding:18px 16px 80px}
+
+.tabs{display:flex; gap:6px; overflow-x:auto; padding:12px 16px 0; max-width:1080px; margin:0 auto;
+  scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{
+  border:1px solid var(--line-strong); background:var(--card); border-radius:999px;
+  padding:9px 16px; font-weight:600; font-size:15px; cursor:pointer; white-space:nowrap;
+}
+.tab[aria-selected="true"]{background:var(--green); border-color:var(--green); color:var(--green-on)}
+.tab .badge{
+  display:inline-block; min-width:20px; margin-left:6px; padding:0 5px; border-radius:999px;
+  background:var(--sunk); font-size:12px; font-weight:700; text-align:center; color:var(--ink-2)
+}
+.tab[aria-selected="true"] .badge{background:rgba(255,255,255,.65); color:var(--green-on)}
+
+/* ---------- Bausteine ---------- */
+.card{background:var(--card); border:1px solid var(--line); border-radius:var(--r-m);
+  box-shadow:var(--shadow); padding:18px; margin-bottom:16px}
+.card > h2, .card > h3{margin-bottom:8px}
+.card-head{display:flex; align-items:flex-start; gap:12px; margin-bottom:12px}
+.card-head > :first-child{flex:1; min-width:0}
+.row{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
+.row.tight{gap:6px}
+.grow{flex:1; min-width:0}
+.stack{display:flex; flex-direction:column; gap:10px}
+.sep{height:1px; background:var(--line); margin:14px 0}
+
+.btn{
+  border:1px solid var(--line-strong); background:var(--card); border-radius:var(--r-s);
+  padding:11px 16px; font-weight:600; cursor:pointer; box-shadow:var(--shadow);
+  transition:transform .06s ease, background .12s ease;
+}
+.btn:active{transform:translateY(1px)}
+.btn:disabled{opacity:.45; cursor:not-allowed; box-shadow:none}
+.btn.primary{background:var(--green); border-color:var(--green); color:var(--green-on)}
+.btn.primary:hover:not(:disabled){background:var(--green-hover)}
+.btn.ghost{background:transparent; box-shadow:none; border-color:transparent; color:var(--ink-2)}
+.btn.ghost:hover{background:var(--sunk)}
+.btn.danger{color:var(--rose-ink); border-color:var(--rose-line); background:var(--rose-soft)}
+.btn.sm{padding:7px 12px; font-size:14px; border-radius:11px}
+.btn.big{padding:16px 22px; font-size:19px; border-radius:var(--r-m)}
+
+label.field{display:block; margin-bottom:10px}
+label.field > span{display:block; font-size:13px; font-weight:700; color:var(--ink-2); margin-bottom:4px}
+input[type=text],input[type=number],input[type=date],input[type=search],textarea,select{
+  width:100%; padding:11px 13px; border:1px solid var(--line-strong); border-radius:var(--r-s);
+  background:var(--card-2); outline:none;
+}
+input:focus,textarea:focus,select:focus{border-color:var(--green-line); background:#fff;
+  box-shadow:0 0 0 3px var(--green-soft)}
+textarea{min-height:120px; resize:vertical; line-height:1.5}
+.w-s{max-width:120px} .w-m{max-width:220px}
+
+.pill{display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:999px;
+  font-size:13px; font-weight:700; border:1px solid var(--line-strong); background:var(--sunk)}
+.pill.ok{background:var(--green-soft); border-color:var(--green-line); color:var(--green-deep)}
+.pill.info{background:var(--blue-soft); border-color:var(--blue-line); color:var(--blue-ink)}
+.pill.warn{background:var(--peach-soft); border-color:var(--peach-line); color:var(--peach-ink)}
+.pill.bad{background:var(--rose-soft); border-color:var(--rose-line); color:var(--rose-ink)}
+.pill.fest{background:var(--lilac-soft); border-color:var(--lilac-line); color:var(--lilac-ink)}
+
+.note{border-radius:var(--r-s); padding:12px 14px; font-size:15px; border:1px solid}
+.note.info{background:var(--blue-soft); border-color:var(--blue-line); color:var(--blue-ink)}
+.note.warn{background:var(--peach-soft); border-color:var(--peach-line); color:var(--peach-ink)}
+.note.bad{background:var(--rose-soft); border-color:var(--rose-line); color:var(--rose-ink)}
+.note.ok{background:var(--green-soft); border-color:var(--green-line); color:var(--green-deep)}
+.note + .note{margin-top:8px}
+
+.empty{text-align:center; color:var(--ink-2); padding:26px 16px}
+.empty .big{font-size:34px; margin-bottom:6px}
+
+/* ---------- Listen ---------- */
+.list{display:flex; flex-direction:column; gap:8px}
+.item{
+  display:flex; align-items:center; gap:12px; padding:12px 14px; background:var(--card-2);
+  border:1px solid var(--line); border-radius:var(--r-s);
+}
+.item .grow{display:flex; flex-direction:column}
+.item .name{font-weight:600}
+.item.click{cursor:pointer}
+.item.click:hover{background:#fff; border-color:var(--line-strong)}
+
+/* ---------- Kugeln ---------- */
+.kugel{
+  display:inline-flex; align-items:center; justify-content:center;
+  width:44px; height:44px; border-radius:50%; font-family:var(--display); font-weight:700;
+  font-size:19px; background:#fff; border:2px solid var(--line-strong); color:var(--ink);
+  flex:none; box-shadow:inset 0 -4px 10px -6px rgba(0,0,0,.35);
+}
+.kugel.sm{width:32px; height:32px; font-size:15px; border-width:2px}
+.kugel.xl{width:96px; height:96px; font-size:42px; border-width:3px}
+.kugel.on{background:var(--green-soft); border-color:var(--green); color:var(--green-deep)}
+.kugel.fest{background:var(--lilac-soft); border-color:var(--lilac-line); color:var(--lilac-ink)}
+.kugel.leer{background:var(--sunk); border-color:var(--line); color:var(--ink-3)}
+
+.kugeln{display:flex; flex-wrap:wrap; gap:8px}
+
+/* Zimmerkacheln zum Antippen */
+.kachel{
+  position:relative; display:flex; flex-direction:column; align-items:center; gap:6px;
+  padding:14px 10px 12px; min-width:104px; background:var(--card); cursor:pointer;
+  border:1px solid var(--line-strong); border-radius:var(--r-m); box-shadow:var(--shadow);
+  transition:transform .06s ease;
+}
+.kachel:active{transform:translateY(1px)}
+.kachel .rest{font-size:13px; font-weight:700; color:var(--green-deep)}
+.kachel .hot{font-size:12px; color:var(--ink-2)}
+.kachel[disabled]{opacity:.4; cursor:not-allowed; box-shadow:none}
+.kachel[disabled] .rest{color:var(--ink-3)}
+.kacheln{display:grid; grid-template-columns:repeat(auto-fill, minmax(110px,1fr)); gap:10px}
+
+/* Personenwahl */
+.wahl{display:grid; grid-template-columns:repeat(auto-fill, minmax(170px,1fr)); gap:8px}
+.wahl button{
+  text-align:left; padding:13px 14px; border-radius:var(--r-s); border:1px solid var(--line-strong);
+  background:var(--card); cursor:pointer; font-weight:600; box-shadow:var(--shadow);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.wahl button:hover{background:var(--green-soft); border-color:var(--green-line)}
+
+/* Grosse Ergebnisanzeige */
+.buehne{
+  background:linear-gradient(180deg,#fff,var(--green-soft)); border:1px solid var(--green-line);
+  border-radius:var(--r-l); padding:26px 20px; text-align:center; box-shadow:var(--shadow-lift);
+}
+.buehne .wer{font-family:var(--display); font-size:30px; font-weight:700; line-height:1.2}
+.buehne .pfeil{color:var(--green-deep); font-size:22px; margin:8px 0 10px}
+.buehne .zi{font-family:var(--display); font-size:22px; font-weight:700; color:var(--green-deep)}
+.buehne .kugel.xl{margin:0 auto 12px}
+
+/* Fortschritt */
+.balken{height:10px; border-radius:999px; background:var(--sunk); overflow:hidden; margin-top:8px}
+.balken > i{display:block; height:100%; background:var(--green); border-radius:999px; transition:width .3s ease}
+
+/* Tabelle Ergebnis */
+table.erg{width:100%; border-collapse:collapse}
+table.erg th{text-align:left; font-size:13px; color:var(--ink-2); padding:6px 8px;
+  border-bottom:1px solid var(--line-strong)}
+table.erg td{padding:9px 8px; border-bottom:1px solid var(--line); vertical-align:middle}
+table.erg tr:last-child td{border-bottom:none}
+
+/* Dialog */
+dialog{
+  border:none; border-radius:var(--r-l); padding:0; max-width:560px; width:calc(100% - 32px);
+  box-shadow:var(--shadow-lift); background:var(--card); color:var(--ink);
+}
+dialog::backdrop{background:rgba(51,63,56,.34); backdrop-filter:blur(2px)}
+.dlg-in{padding:22px}
+.dlg-in h2{margin-bottom:10px}
+.dlg-foot{display:flex; gap:10px; justify-content:flex-end; margin-top:18px; flex-wrap:wrap}
+
+/* Toast */
+#toast{
+  position:fixed; left:50%; bottom:24px; transform:translateX(-50%) translateY(20px);
+  background:var(--ink); color:#fff; padding:12px 20px; border-radius:999px; font-weight:600;
+  box-shadow:var(--shadow-lift); opacity:0; pointer-events:none; transition:.2s ease; z-index:80;
+  max-width:calc(100% - 32px); text-align:center;
+}
+#toast.on{opacity:1; transform:translateX(-50%) translateY(0)}
+
+/* ---------- Drucken ---------- */
+#druck{display:none}
+@media print{
+  .top,.tabs,main,#toast{display:none !important}
+  #druck{display:block !important}
+  body{background:#fff; font-size:12pt}
+  .blatt{page-break-after:always; padding:0}
+  .blatt:last-child{page-break-after:auto}
+  .schild{display:flex; flex-direction:column; justify-content:center; align-items:center;
+    height:24cm; text-align:center}
+  .schild .zi{font-family:var(--display); font-size:64pt; font-weight:700; margin:0}
+  .schild .hot{font-size:20pt; color:#555; margin-top:4pt}
+  .schild ul{list-style:none; padding:0; margin:28pt 0 0; font-size:24pt; line-height:1.6}
+  table.druck{width:100%; border-collapse:collapse; font-size:12pt}
+  table.druck th{text-align:left; border-bottom:1.5pt solid #333; padding:4pt 6pt}
+  table.druck td{padding:4pt 6pt; border-bottom:.5pt solid #bbb}
+  .druck-kopf{margin-bottom:10pt}
+  .druck-kopf h1{font-size:20pt}
+  .druck-kopf .small{color:#555}
+}
+@media (max-width:560px){
+  .top-in{gap:8px}
+  h1{font-size:22px}
+  main{padding:14px 12px 70px}
+  .card{padding:14px; border-radius:var(--r-s)}
+}
+</style>
+
+<div class="top">
+  <div class="top-in">
+    <button class="btn ghost sm" id="btnZurueck" hidden>&larr; Fahrten</button>
+    <div class="top-title">
+      <h1 id="titel">Zimmerauslosung</h1>
+      <div class="sub" id="untertitel">Gruppenfahrten, Kugeln, Zimmer</div>
+    </div>
+    <button class="btn sm" id="btnSichern" title="Alle Fahrten als Datei sichern">Sichern</button>
+  </div>
+</div>
+
+<div class="tabs" id="tabs" hidden>
+  <button class="tab" data-tab="zimmer" role="tab">Zimmer <span class="badge" id="bZimmer">0</span></button>
+  <button class="tab" data-tab="leute"  role="tab">Teilnehmer <span class="badge" id="bLeute">0</span></button>
+  <button class="tab" data-tab="losen"  role="tab">Auslosung</button>
+  <button class="tab" data-tab="erg"    role="tab">Ergebnis</button>
+  <button class="tab" data-tab="proto"  role="tab">Protokoll</button>
+</div>
+
+<main>
+  <!-- ============ Fahrtenübersicht ============ -->
+  <section id="vFahrten">
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <h2>Fahrten</h2>
+          <div class="small muted">Eine Fahrt anlegen, dann anklicken und Zimmer verlosen.</div>
+        </div>
+      </div>
+      <div class="list" id="fahrtenListe"></div>
+      <div class="sep"></div>
+      <div class="row">
+        <input type="text" id="neueFahrt" class="grow" placeholder="Name der Fahrt, z. B. Sommerfahrt Norderney"
+               maxlength="80" autocomplete="off">
+        <button class="btn primary" id="btnFahrtAnlegen">Anlegen</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Wo die Daten liegen</h3>
+      <p class="small muted">Alles bleibt in diesem Browser (<code>localStorage</code>) und geht nirgendwohin.
+        Das heißt aber auch: Löscht jemand die Websitedaten oder geht das Gerät verloren, ist die Fahrt weg.
+        <strong>Vor der Fahrt sichern</strong> – oben rechts.</p>
+      <div class="row">
+        <button class="btn sm" id="btnLaden">Sicherung einlesen</button>
+        <input type="file" id="dateiLaden" accept="application/json,.json" hidden>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ Zimmer ============ -->
+  <section id="vZimmer" hidden>
+    <div id="zimmerHinweis"></div>
+
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <h2>Zimmer und Kugeln</h2>
+          <div class="small muted">Für jedes Bett liegt eine Kugel mit der Zimmernummer in der Trommel.
+            Ein Vierbettzimmer 3 heißt: viermal die Kugel „3“.</div>
+        </div>
+      </div>
+      <div class="list" id="zimmerListe"></div>
+      <div class="sep"></div>
+      <div class="row">
+        <label class="field w-s" style="margin:0">
+          <span>Kugelnummer</span>
+          <input type="text" id="zLos" maxlength="6" placeholder="3" autocomplete="off" inputmode="numeric">
+        </label>
+        <label class="field w-s" style="margin:0">
+          <span>Betten</span>
+          <input type="number" id="zBetten" min="1" max="20" value="4">
+        </label>
+        <label class="field grow" style="margin:0">
+          <span>Notiz (freiwillig)</span>
+          <input type="text" id="zNotiz" maxlength="60" placeholder="z. B. Erdgeschoss, Dusche" autocomplete="off">
+        </label>
+        <button class="btn primary" id="btnZimmerAnlegen">Zimmer hinzufügen</button>
+      </div>
+      <div class="sep"></div>
+      <div class="row">
+        <button class="btn sm" id="btnZimmerSerie">Mehrere auf einmal …</button>
+        <span class="small muted">z. B. „Zimmer 1–8, je 4 Betten“</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ Teilnehmer ============ -->
+  <section id="vLeute" hidden>
+    <div id="leuteHinweis"></div>
+
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <h2>Teilnehmer</h2>
+          <div class="small muted">Wer eine feste Vorbelegung bekommt, zieht nicht mit –
+            und die passenden Kugeln bleiben aus der Trommel draußen.</div>
+        </div>
+      </div>
+      <div class="row" style="margin-bottom:10px">
+        <input type="search" id="sucheLeute" class="grow" placeholder="Namen suchen …" autocomplete="off">
+      </div>
+      <div class="list" id="leuteListe"></div>
+      <div class="sep"></div>
+      <div class="row">
+        <input type="text" id="neuePerson" class="grow" placeholder="Vor- und Nachname" maxlength="60" autocomplete="off">
+        <button class="btn primary" id="btnPersonAnlegen">Hinzufügen</button>
+        <button class="btn sm" id="btnListeEinfuegen">Liste einfügen …</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ Auslosung ============ -->
+  <section id="vLosen" hidden>
+    <div id="losenHinweis"></div>
+
+    <div class="card" id="kBuehne" hidden>
+      <div class="buehne">
+        <div class="kugel xl" id="buehneKugel">?</div>
+        <div class="wer" id="buehneWer">–</div>
+        <div class="pfeil">zieht</div>
+        <div class="zi" id="buehneZi">–</div>
+      </div>
+      <div class="row" style="margin-top:12px; justify-content:center">
+        <button class="btn sm" id="btnRueckgaengig">Letzten Zug zurücknehmen</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <h2 id="losenSchritt">Schritt 1 · Wer zieht?</h2>
+          <div class="small muted" id="losenText">Person antippen, dann die gezogene Kugel wählen.</div>
+        </div>
+        <button class="btn ghost sm" id="btnZufallsperson" title="Wenn niemand anfangen will">Wer zuerst?</button>
+      </div>
+
+      <div id="schritt1">
+        <div class="row" style="margin-bottom:10px">
+          <input type="search" id="sucheZiehen" class="grow" placeholder="Namen suchen …" autocomplete="off">
+        </div>
+        <div class="wahl" id="offeneLeute"></div>
+        <div class="empty hidden" id="alleGezogen">
+          <div class="big">🎉</div>
+          <div>Alle haben gezogen. Weiter zum <strong>Ergebnis</strong>.</div>
+        </div>
+      </div>
+
+      <div id="schritt2" hidden>
+        <div class="note info" style="margin-bottom:14px">
+          <strong id="schritt2Name">–</strong> hat gezogen. Welche Nummer steht auf der Kugel?
+        </div>
+        <div class="kacheln" id="zimmerKacheln"></div>
+        <div class="row" style="margin-top:14px">
+          <button class="btn ghost sm" id="btnAbbrechen">Doch jemand anderes</button>
+          <span class="grow"></span>
+          <button class="btn ghost sm" id="btnDigital" title="Notfall: wenn die Trommel fehlt">Ersatzweise digital ziehen</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <h2>Trommel</h2>
+          <div class="small muted" id="trommelText">So viele Kugeln müssen jetzt noch drin sein.</div>
+        </div>
+        <button class="btn sm" id="btnPackliste">Packliste drucken</button>
+      </div>
+      <div class="kugeln" id="trommel"></div>
+      <div class="balken"><i id="balken" style="width:0%"></i></div>
+      <div class="small muted" style="margin-top:6px" id="fortschritt"></div>
+    </div>
+  </section>
+
+  <!-- ============ Ergebnis ============ -->
+  <section id="vErg" hidden>
+    <div id="ergHinweis"></div>
+
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <h2>Zimmernummern im Hotel</h2>
+          <div class="small muted">Die Kugelnummer bleibt, wie sie gezogen wurde.
+            Trag hier die echte Nummer nach, sobald du sie an der Rezeption hast.</div>
+        </div>
+      </div>
+      <div class="list" id="hotelListe"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div><h2>Belegung</h2></div>
+        <div class="row tight">
+          <button class="btn sm" id="btnSortZimmer" aria-pressed="true">nach Zimmer</button>
+          <button class="btn sm" id="btnSortName" aria-pressed="false">nach Name</button>
+        </div>
+      </div>
+      <div id="belegung"></div>
+      <div class="sep"></div>
+      <div class="row">
+        <button class="btn sm" id="btnTausch">Zwei Personen tauschen …</button>
+        <span class="grow"></span>
+        <button class="btn sm" id="btnDruckListe">Liste drucken</button>
+        <button class="btn sm" id="btnDruckSchilder">Türschilder drucken</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ Protokoll ============ -->
+  <section id="vProto" hidden>
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <h2>Protokoll</h2>
+          <div class="small muted">Jeder Zug, jede Vorbelegung, jeder Tausch – in der Reihenfolge,
+            in der es passiert ist. Falls jemand fragt.</div>
+        </div>
+      </div>
+      <div class="list" id="protoListe"></div>
+    </div>
+    <div class="card">
+      <h3>Diese Fahrt</h3>
+      <div class="row" style="margin-top:10px">
+        <button class="btn sm" id="btnFahrtUmbenennen">Umbenennen</button>
+        <button class="btn sm" id="btnZiehungLeeren">Ziehung zurücksetzen</button>
+        <span class="grow"></span>
+        <button class="btn sm danger" id="btnFahrtLoeschen">Fahrt löschen</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- Druckbereich, nur beim Drucken sichtbar -->
+<div id="druck"></div>
+
+<!-- ============ Dialoge ============ -->
+<dialog id="dlgSerie"><form method="dialog" class="dlg-in">
+  <h2>Mehrere Zimmer anlegen</h2>
+  <p class="small muted">Legt Zimmer mit fortlaufenden Kugelnummern an.</p>
+  <div class="row">
+    <label class="field w-s"><span>von</span><input type="number" id="serieVon" value="1" min="1" max="999"></label>
+    <label class="field w-s"><span>bis</span><input type="number" id="serieBis" value="8" min="1" max="999"></label>
+    <label class="field w-s"><span>Betten je Zimmer</span><input type="number" id="serieBetten" value="4" min="1" max="20"></label>
+  </div>
+  <div class="dlg-foot">
+    <button class="btn ghost" value="ab">Abbrechen</button>
+    <button class="btn primary" value="ok" id="serieOk">Anlegen</button>
+  </div>
+</form></dialog>
+
+<dialog id="dlgListe"><form method="dialog" class="dlg-in">
+  <h2>Namensliste einfügen</h2>
+  <p class="small muted">Ein Name pro Zeile. Aus Excel oder einer Mail kopieren geht auch.</p>
+  <textarea id="listeText" placeholder="Anna Berger&#10;Ben Cordes&#10;Clara Dietz"></textarea>
+  <div class="dlg-foot">
+    <button class="btn ghost" value="ab">Abbrechen</button>
+    <button class="btn primary" value="ok" id="listeOk">Übernehmen</button>
+  </div>
+</form></dialog>
+
+<dialog id="dlgFest"><form method="dialog" class="dlg-in">
+  <h2>Feste Vorbelegung</h2>
+  <p class="small muted" id="festWer">–</p>
+  <label class="field"><span>Zimmer</span>
+    <select id="festZimmer"></select>
+  </label>
+  <div class="note warn tiny" style="margin-top:6px">
+    Achtung: Vorbelegte Betten müssen als Kugeln <strong>aus der Trommel</strong>.
+    Die Packliste im Reiter „Auslosung“ zeigt, was drin bleibt.
+  </div>
+  <div class="dlg-foot">
+    <button class="btn ghost" value="ab">Abbrechen</button>
+    <button class="btn primary" value="ok" id="festOk">Übernehmen</button>
+  </div>
+</form></dialog>
+
+<dialog id="dlgTausch"><form method="dialog" class="dlg-in">
+  <h2>Zwei Personen tauschen</h2>
+  <p class="small muted">Beide behalten im Protokoll, was sie ursprünglich gezogen haben.</p>
+  <label class="field"><span>Person A</span><select id="tauschA"></select></label>
+  <label class="field"><span>Person B</span><select id="tauschB"></select></label>
+  <div id="tauschHinweis"></div>
+  <div class="dlg-foot">
+    <button class="btn ghost" value="ab">Abbrechen</button>
+    <button class="btn primary" value="ok" id="tauschOk">Tauschen</button>
+  </div>
+</form></dialog>
+
+<dialog id="dlgFrage"><form method="dialog" class="dlg-in">
+  <h2 id="frageTitel">Sicher?</h2>
+  <p id="frageText" class="muted"></p>
+  <div class="dlg-foot">
+    <button class="btn ghost" value="ab" id="frageAb">Abbrechen</button>
+    <button class="btn danger" value="ok" id="frageOk">Ja</button>
+  </div>
+</form></dialog>
+
+<dialog id="dlgText"><form method="dialog" class="dlg-in">
+  <h2 id="textTitel">Eingabe</h2>
+  <label class="field"><span id="textLabel">Wert</span><input type="text" id="textWert" maxlength="80"></label>
+  <div class="dlg-foot">
+    <button class="btn ghost" value="ab">Abbrechen</button>
+    <button class="btn primary" value="ok">Übernehmen</button>
+  </div>
+</form></dialog>
+
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+"use strict";
+/* ===================================================================
+   Zimmerauslosung
+   Modell: Pro Bett liegt eine Kugel mit der Zimmernummer in der Trommel.
+   Das Programm zieht nicht – es zaehlt mit, prueft und schreibt auf.
+   =================================================================== */
+
+const KEY = "auslosung.v1";
+let DB = { version:1, trips:[] };
+let cur = null;          // aktuelle Fahrt
+let tab = "zimmer";
+let waehlt = null;       // Person, die gerade zieht (Schritt 2)
+let sortNach = "zimmer";
+let filterLeute = "", filterZiehen = "";
+
+/* ---------- Werkzeug ---------- */
+const $  = (s, r=document) => r.querySelector(s);
+const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
+const esc = s => String(s==null?"":s).replace(/[&<>"']/g, c =>
+  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const id = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+const heute = () => new Date().toLocaleString("de-DE",
+  {day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"});
+const sortDe = (a,b) => a.localeCompare(b,"de",{sensitivity:"base"});
+
+function toast(text){
+  const t = $("#toast"); t.textContent = text; t.classList.add("on");
+  clearTimeout(toast._t); toast._t = setTimeout(()=>t.classList.remove("on"), 2600);
+}
+
+function frage(titel, text, jaText="Ja"){
+  return new Promise(ok=>{
+    $("#frageTitel").textContent = titel;
+    $("#frageText").textContent  = text;
+    $("#frageOk").textContent    = jaText;
+    const d = $("#dlgFrage");
+    d.onclose = () => ok(d.returnValue === "ok");
+    d.showModal();
+  });
+}
+
+function abfrage(titel, label, wert=""){
+  return new Promise(ok=>{
+    $("#textTitel").textContent = titel;
+    $("#textLabel").textContent = label;
+    const inp = $("#textWert"); inp.value = wert;
+    const d = $("#dlgText");
+    d.onclose = () => ok(d.returnValue === "ok" ? inp.value.trim() : null);
+    d.showModal(); setTimeout(()=>{ inp.focus(); inp.select(); }, 40);
+  });
+}
+
+/* ---------- Speicher ---------- */
+function load(){
+  try{
+    const roh = localStorage.getItem(KEY);
+    if(roh){
+      const d = JSON.parse(roh);
+      if(d && Array.isArray(d.trips)) DB = d;
+    }
+  }catch(e){ console.warn("Gespeicherte Daten unlesbar:", e); }
+}
+function save(){
+  try{ localStorage.setItem(KEY, JSON.stringify(DB)); }
+  catch(e){
+    toast("Speichern fehlgeschlagen – bitte sichern!");
+    console.error(e);
+  }
+}
+function log(typ, text, extra={}){
+  cur.log.push(Object.assign({at:Date.now(), typ, text}, extra));
+}
+
+/* ---------- Abfragen aufs Modell ---------- */
+const zimmerVon  = rid => cur.rooms.find(r=>r.id===rid) || null;
+const personVon  = pid => cur.people.find(p=>p.id===pid) || null;
+const zimmerName = rid => { const r = zimmerVon(rid); return r ? r.los : "?"; };
+
+const bettenGesamt = () => cur.rooms.reduce((s,r)=>s+r.betten, 0);
+const festIn       = r  => cur.people.filter(p=>p.festRoomId===r.id).length;
+const gezogenIn    = r  => cur.people.filter(p=>p.losRoomId===r.id).length;
+const belegtIn     = r  => cur.people.filter(p=>p.roomId===r.id).length;
+/* Kugeln, die zu Beginn in die Trommel gehoeren: ein Bett = eine Kugel,
+   abzueglich der fest vergebenen Betten. */
+const kugelnStart  = r  => Math.max(0, r.betten - festIn(r));
+const kugelnRest   = r  => kugelnStart(r) - gezogenIn(r);
+
+const offeneLeute  = () => cur.people.filter(p=>!p.festRoomId && !p.losRoomId);
+/* Woher das Zimmer kommt – nach einem Tausch stimmt "fest" bzw. "gezogen" nicht mehr. */
+function merkmal(p){
+  if(!p.roomId) return null;
+  const her = p.festRoomId || p.losRoomId;
+  if(her && her !== p.roomId)
+    return {klasse:"info", text:"getauscht", titel:`ursprünglich Zimmer ${zimmerName(her)}`};
+  if(p.festRoomId) return {klasse:"fest", text:"fest", titel:"feste Vorbelegung, nicht gelost"};
+  if(p.digital)    return {klasse:"info", text:"digital", titel:"ersatzweise digital gezogen"};
+  return null;
+}
+const merkmalHtml = p => {
+  const m = merkmal(p);
+  return m ? `<span class="pill ${m.klasse} tiny" title="${esc(m.titel)}">${m.text}</span>` : "";
+};
+const zieherGesamt = () => cur.people.filter(p=>!p.festRoomId).length;
+const nachName     = liste => liste.slice().sort((a,b)=>sortDe(a.name,b.name));
+const zimmerSort   = () => cur.rooms.slice().sort((a,b)=>{
+  const na = parseInt(a.los,10), nb = parseInt(b.los,10);
+  if(!isNaN(na) && !isNaN(nb) && na!==nb) return na-nb;
+  return sortDe(a.los, b.los);
+});
+
+/* ---------- Ansicht wechseln ---------- */
+function zeigeFahrten(){
+  cur = null; waehlt = null;
+  $("#btnZurueck").hidden = true;
+  $("#tabs").hidden = true;
+  $("#titel").textContent = "Zimmerauslosung";
+  $("#untertitel").textContent = "Gruppenfahrten, Kugeln, Zimmer";
+  ["vZimmer","vLeute","vLosen","vErg","vProto"].forEach(v=>$("#"+v).hidden = true);
+  $("#vFahrten").hidden = false;
+  renderFahrten();
+}
+
+function oeffne(tripId, welcherTab){
+  cur = DB.trips.find(t=>t.id===tripId);
+  if(!cur){ zeigeFahrten(); return; }
+  waehlt = null;
+  tab = welcherTab || (cur.rooms.length===0 ? "zimmer" : cur.people.length===0 ? "leute" : "losen");
+  $("#vFahrten").hidden = true;
+  $("#btnZurueck").hidden = false;
+  $("#tabs").hidden = false;
+  $("#titel").textContent = cur.name;
+  zeigeTab(tab);
+}
+
+function zeigeTab(t){
+  tab = t; waehlt = null;
+  $$("#tabs .tab").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab===t)));
+  const map = {zimmer:"vZimmer", leute:"vLeute", losen:"vLosen", erg:"vErg", proto:"vProto"};
+  Object.values(map).forEach(v => $("#"+v).hidden = true);
+  $("#"+map[t]).hidden = false;
+  render();
+  window.scrollTo({top:0, behavior:"instant"});
+}
+
+/* ---------- Gesamt-Rendering ---------- */
+function render(){
+  if(!cur) return renderFahrten();
+  $("#titel").textContent = cur.name;
+  $("#bZimmer").textContent = cur.rooms.length;
+  $("#bLeute").textContent  = cur.people.length;
+  const b = bettenGesamt(), n = cur.people.length;
+  $("#untertitel").textContent =
+    `${n} Teilnehmer · ${cur.rooms.length} Zimmer · ${b} Betten` +
+    (b>n ? ` · ${b-n} frei` : b<n ? ` · ${n-b} zu wenig!` : " · passt genau");
+  if(tab==="zimmer") renderZimmer();
+  if(tab==="leute")  renderLeute();
+  if(tab==="losen")  renderLosen();
+  if(tab==="erg")    renderErg();
+  if(tab==="proto")  renderProto();
+  save();
+}
+
+/* ---------- Fahrten ---------- */
+function renderFahrten(){
+  const el = $("#fahrtenListe");
+  if(DB.trips.length===0){
+    el.innerHTML = `<div class="empty"><div class="big">🧳</div>
+      <div>Noch keine Fahrt angelegt. Unten den Namen eintragen.</div></div>`;
+    return;
+  }
+  el.innerHTML = DB.trips.slice().sort((a,b)=>b.createdAt-a.createdAt).map(t=>{
+    const gez = t.people.filter(p=>p.roomId).length;
+    const stand = t.people.length===0 ? "noch keine Teilnehmer"
+      : gez===0 ? "noch nicht gelost"
+      : gez < t.people.length ? `${gez} von ${t.people.length} gezogen`
+      : "ausgelost";
+    const fertig = t.people.length>0 && gez===t.people.length;
+    return `<div class="item click" data-trip="${t.id}">
+      <div class="grow">
+        <span class="name">${esc(t.name)}</span>
+        <span class="small muted">${t.people.length} Teilnehmer · ${t.rooms.length} Zimmer · ${stand}</span>
+      </div>
+      <span class="pill ${fertig?"ok":"info"}">${fertig?"fertig":"offen"}</span>
+    </div>`;
+  }).join("");
+}
+
+/* ---------- Zimmer ---------- */
+function renderZimmer(){
+  const hin = [];
+  if(cur.rooms.length===0)
+    hin.push(`<div class="note info">Lege zuerst die Zimmer an – so viele Kugeln je Zimmer,
+      wie es Betten hat.</div>`);
+  cur.rooms.forEach(r=>{
+    const ueber = festIn(r) - r.betten;
+    if(ueber>0) hin.push(`<div class="note bad">Zimmer <strong>${esc(r.los)}</strong> hat
+      ${r.betten} Betten, aber ${festIn(r)} feste Zuweisungen. ${ueber} zu viel.</div>`);
+  });
+  const n = cur.people.length, b = bettenGesamt();
+  if(n>0 && b>0 && b<n)
+    hin.push(`<div class="note warn"><strong>${n-b} Personen zu viel:</strong>
+      ${n} Teilnehmer, aber nur ${b} Betten.</div>`);
+  $("#zimmerHinweis").innerHTML = hin.join("");
+
+  const el = $("#zimmerListe");
+  if(cur.rooms.length===0){ el.innerHTML = ""; return; }
+  el.innerHTML = zimmerSort().map(r=>{
+    const f = festIn(r), start = kugelnStart(r), belegt = belegtIn(r);
+    return `<div class="item">
+      <div class="kugel">${esc(r.los)}</div>
+      <div class="grow">
+        <span class="name">Zimmer ${esc(r.los)}${r.hotel?` · Hotel ${esc(r.hotel)}`:""}</span>
+        <span class="small muted">${r.betten} Betten · ${start} Kugel${start===1?"":"n"} in die Trommel${
+          f?` (${f} fest vergeben)`:""}${belegt?` · ${belegt} belegt`:""}${r.notiz?` · ${esc(r.notiz)}`:""}</span>
+      </div>
+      <button class="btn ghost sm" data-zbearb="${r.id}">Ändern</button>
+      <button class="btn ghost sm" data-zloesch="${r.id}" title="Zimmer löschen">✕</button>
+    </div>`;
+  }).join("");
+}
+
+function zimmerAnlegen(los, betten, notiz){
+  los = String(los||"").trim();
+  betten = Math.max(1, Math.min(20, parseInt(betten,10)||0));
+  if(!los){ toast("Kugelnummer fehlt"); return false; }
+  if(cur.rooms.some(r=>r.los.toLowerCase()===los.toLowerCase())){
+    toast(`Zimmer ${los} gibt es schon`); return false;
+  }
+  cur.rooms.push({id:id(), los, betten, hotel:"", notiz:(notiz||"").trim()});
+  log("zimmer", `Zimmer ${los} angelegt (${betten} Betten)`);
+  return true;
+}
+
+/* ---------- Teilnehmer ---------- */
+function renderLeute(){
+  const hin = [];
+  if(cur.rooms.length===0)
+    hin.push(`<div class="note info">Ohne Zimmer geht keine Vorbelegung. Erst den Reiter
+      <strong>Zimmer</strong>.</div>`);
+  $("#leuteHinweis").innerHTML = hin.join("");
+
+  const el = $("#leuteListe");
+  const f = filterLeute.toLowerCase();
+  const liste = nachName(cur.people).filter(p=>!f || p.name.toLowerCase().includes(f));
+  if(cur.people.length===0){
+    el.innerHTML = `<div class="empty"><div class="big">👥</div>
+      <div>Noch niemand eingetragen.</div></div>`;
+    return;
+  }
+  if(liste.length===0){ el.innerHTML = `<div class="empty">Kein Treffer.</div>`; return; }
+  el.innerHTML = liste.map(p=>{
+    let zustand = `<span class="pill">offen</span>`;
+    if(p.festRoomId) zustand = `<span class="pill fest">fest · Zimmer ${esc(zimmerName(p.festRoomId))}</span>`;
+    else if(p.roomId) zustand = `<span class="pill ok">gezogen · Zimmer ${esc(zimmerName(p.roomId))}</span>`;
+    return `<div class="item">
+      <div class="grow">
+        <span class="name">${esc(p.name)}</span>
+        ${p.notiz?`<span class="small muted">${esc(p.notiz)}</span>`:""}
+      </div>
+      ${zustand}
+      <button class="btn ghost sm" data-pfest="${p.id}" title="Feste Vorbelegung">Zimmer fest</button>
+      <button class="btn ghost sm" data-ploesch="${p.id}" title="Person löschen">✕</button>
+    </div>`;
+  }).join("");
+}
+
+function personAnlegen(name){
+  name = String(name||"").trim().replace(/\s+/g," ");
+  if(!name) return false;
+  if(cur.people.some(p=>p.name.toLowerCase()===name.toLowerCase())){
+    toast(`${name} steht schon auf der Liste`); return false;
+  }
+  cur.people.push({id:id(), name, notiz:"", festRoomId:null, losRoomId:null, roomId:null, digital:false});
+  return true;
+}
+
+/* ---------- Auslosung ---------- */
+function renderLosen(){
+  const hin = [];
+  if(cur.rooms.length===0) hin.push(`<div class="note bad">Es gibt noch keine Zimmer.</div>`);
+  if(cur.people.length===0) hin.push(`<div class="note bad">Es gibt noch keine Teilnehmer.</div>`);
+  const trommelSumme = cur.rooms.reduce((s,r)=>s+kugelnStart(r), 0);
+  const zieher = zieherGesamt();
+  if(cur.rooms.length && cur.people.length){
+    if(trommelSumme < zieher)
+      hin.push(`<div class="note bad"><strong>Zu wenig Kugeln:</strong> ${zieher} Personen ziehen,
+        aber nur ${trommelSumme} Kugeln gehören in die Trommel. Es fehlen ${zieher-trommelSumme} Betten.</div>`);
+    else if(trommelSumme > zieher)
+      hin.push(`<div class="note info">${trommelSumme} Kugeln, ${zieher} Ziehende –
+        ${trommelSumme-zieher} Kugel${trommelSumme-zieher===1?"":"n"} bleib${trommelSumme-zieher===1?"t":"en"}
+        am Ende übrig. Das Los entscheidet dann auch, welche Betten frei bleiben.</div>`);
+  }
+  $("#losenHinweis").innerHTML = hin.join("");
+
+  // Trommel: verbleibende Kugeln
+  const t = $("#trommel");
+  const kugeln = [];
+  zimmerSort().forEach(r=>{
+    const rest = kugelnRest(r);
+    for(let i=0;i<Math.max(0,rest);i++) kugeln.push(r.los);
+  });
+  t.innerHTML = kugeln.length
+    ? kugeln.map(k=>`<span class="kugel sm on">${esc(k)}</span>`).join("")
+    : `<span class="muted small">Die Trommel ist leer – es dürfte keine Kugel mehr drin liegen.</span>`;
+  $("#trommelText").textContent = kugeln.length
+    ? `Jetzt müssen noch ${kugeln.length} Kugel${kugeln.length===1?"":"n"} in der Trommel sein – nachzählen lohnt.`
+    : "";
+
+  const gezogen = cur.people.filter(p=>p.losRoomId).length;
+  const anteil = zieher ? Math.round(gezogen/zieher*100) : 0;
+  $("#balken").style.width = anteil + "%";
+  const fest = cur.people.length - zieher;
+  $("#fortschritt").textContent =
+    `${gezogen} von ${zieher} gezogen` + (fest ? ` · ${fest} fest vorbelegt` : "");
+
+  // Buehne: letzter Zug
+  const letzte = [...cur.log].reverse().find(l=>l.typ==="zug");
+  const zeigeBuehne = !!letzte && !waehlt;
+  $("#kBuehne").hidden = !zeigeBuehne;
+  if(zeigeBuehne){
+    const p = personVon(letzte.personId), r = zimmerVon(letzte.roomId);
+    $("#buehneKugel").textContent = r ? r.los : "?";
+    $("#buehneWer").textContent   = p ? p.name : "–";
+    $("#buehneZi").textContent    = r
+      ? `Zimmer ${r.los}` + (r.hotel ? ` · Hotel ${r.hotel}` : "")
+      : "–";
+    $("#btnRueckgaengig").disabled = !p;
+  }
+
+  // Schritt 1 oder 2
+  $("#schritt1").hidden = !!waehlt;
+  $("#schritt2").hidden = !waehlt;
+  if(waehlt){
+    $("#losenSchritt").textContent = "Schritt 2 · Welche Kugel?";
+    $("#losenText").textContent = "Die Nummer auf der gezogenen Kugel antippen.";
+    $("#schritt2Name").textContent = waehlt.name;
+    $("#zimmerKacheln").innerHTML = zimmerSort().map(r=>{
+      const rest = kugelnRest(r);
+      const aus = rest<=0;
+      return `<button class="kachel" data-kachel="${r.id}" ${aus?"disabled":""}>
+        <span class="kugel ${aus?"leer":"on"}">${esc(r.los)}</span>
+        <span class="rest">${aus?"keine mehr":`${rest} Kugel${rest===1?"":"n"}`}</span>
+        ${r.hotel?`<span class="hot">Hotel ${esc(r.hotel)}</span>`:""}
+      </button>`;
+    }).join("");
+  }else{
+    $("#losenSchritt").textContent = "Schritt 1 · Wer zieht?";
+    $("#losenText").textContent = "Person antippen, dann die gezogene Kugel wählen.";
+    const f = filterZiehen.toLowerCase();
+    const offen = nachName(offeneLeute()).filter(p=>!f || p.name.toLowerCase().includes(f));
+    $("#alleGezogen").classList.toggle("hidden", offeneLeute().length>0);
+    $("#offeneLeute").innerHTML = offen.map(p=>
+      `<button data-zieht="${p.id}">${esc(p.name)}</button>`).join("");
+  }
+}
+
+function ziehe(person, room, digital=false){
+  if(kugelnRest(room) <= 0){
+    toast(`Zimmer ${room.los} ist voll – diese Kugel dürfte nicht mehr in der Trommel sein.`);
+    return;
+  }
+  person.losRoomId = room.id;
+  person.roomId    = room.id;
+  person.digital   = digital;
+  log("zug", `${person.name} zieht Zimmer ${room.los}${digital?" (digital ersatzgezogen)":""}`,
+      {personId:person.id, roomId:room.id, digital});
+  waehlt = null;
+  render();
+}
+
+function digitalZiehen(){
+  const topf = [];
+  cur.rooms.forEach(r=>{ for(let i=0;i<kugelnRest(r);i++) topf.push(r); });
+  if(topf.length===0){ toast("Keine Kugel mehr übrig."); return; }
+  const w = new Uint32Array(1); crypto.getRandomValues(w);
+  ziehe(waehlt, topf[w[0] % topf.length], true);
+}
+
+function rueckgaengig(){
+  const i = [...cur.log].map((l,ix)=>({l,ix})).reverse().find(x=>x.l.typ==="zug");
+  if(!i){ toast("Kein Zug zum Zurücknehmen."); return; }
+  const p = personVon(i.l.personId);
+  if(p){ p.losRoomId = null; p.roomId = null; p.digital = false; }
+  cur.log.splice(i.ix, 1);
+  log("undo", `Zug zurückgenommen: ${i.l.text}`);
+  waehlt = null;
+  render();
+  toast("Zug zurückgenommen.");
+}
+
+/* ---------- Ergebnis ---------- */
+function renderErg(){
+  renderErgHinweise();
+  renderHotelListe();
+  renderBelegung();
+}
+
+function renderErgHinweise(){
+  const hin = [];
+  const ohne = cur.people.filter(p=>!p.roomId).length;
+  if(ohne>0) hin.push(`<div class="note warn">${ohne} Person${ohne===1?"":"en"} ${ohne===1?"hat":"haben"}
+    noch kein Zimmer.</div>`);
+  const ohneHotel = cur.rooms.filter(r=>!r.hotel && belegtIn(r)>0).length;
+  if(ohne===0 && ohneHotel>0) hin.push(`<div class="note info">Bei ${ohneHotel} belegten
+    Zimmer${ohneHotel===1?"":"n"} fehlt noch die echte Hotelnummer.</div>`);
+  cur.rooms.forEach(r=>{
+    if(belegtIn(r) > r.betten) hin.push(`<div class="note bad">Zimmer ${esc(r.los)} ist überbelegt:
+      ${belegtIn(r)} Personen auf ${r.betten} Betten.</div>`);
+  });
+  $("#ergHinweis").innerHTML = hin.join("");
+}
+
+function renderHotelListe(){
+  $("#hotelListe").innerHTML = cur.rooms.length===0
+    ? `<div class="empty">Noch keine Zimmer.</div>`
+    : zimmerSort().map(r=>`<div class="item">
+        <div class="kugel">${esc(r.los)}</div>
+        <div class="grow">
+          <span class="name">Kugel ${esc(r.los)}</span>
+          <span class="small muted">${belegtIn(r)} von ${r.betten} Betten belegt</span>
+        </div>
+        <input type="text" class="w-m" data-hotel="${r.id}" value="${esc(r.hotel)}"
+               placeholder="Nummer im Hotel" maxlength="20" autocomplete="off">
+      </div>`).join("");
+}
+
+/* Getrennt vom Rest, damit das Nachtragen der Hotelnummer den Cursor
+   nicht aus dem Eingabefeld wirft. */
+function renderBelegung(){
+  const el = $("#belegung");
+  $("#btnSortZimmer").setAttribute("aria-pressed", String(sortNach==="zimmer"));
+  $("#btnSortName").setAttribute("aria-pressed", String(sortNach==="name"));
+  if(cur.people.length===0){ el.innerHTML = `<div class="empty">Noch keine Teilnehmer.</div>`; return; }
+
+  if(sortNach==="name"){
+    el.innerHTML = `<table class="erg"><thead><tr><th>Name</th><th>Kugel</th><th>Hotelzimmer</th><th></th></tr></thead>
+      <tbody>${nachName(cur.people).map(p=>{
+        const r = p.roomId ? zimmerVon(p.roomId) : null;
+        return `<tr>
+          <td>${esc(p.name)}</td>
+          <td>${r?`<span class="kugel sm on">${esc(r.los)}</span>`:`<span class="muted small">offen</span>`}</td>
+          <td>${r&&r.hotel?`<strong>${esc(r.hotel)}</strong>`:`<span class="muted small">–</span>`}</td>
+          <td class="nowrap">${merkmalHtml(p)}</td>
+        </tr>`;
+      }).join("")}</tbody></table>`;
+  }else{
+    el.innerHTML = zimmerSort().map(r=>{
+      const leute = nachName(cur.people.filter(p=>p.roomId===r.id));
+      const frei = r.betten - leute.length;
+      return `<div style="margin-bottom:14px">
+        <div class="row tight" style="margin-bottom:6px">
+          <span class="kugel sm on">${esc(r.los)}</span>
+          <strong>Zimmer ${esc(r.los)}</strong>
+          ${r.hotel?`<span class="pill ok">Hotel ${esc(r.hotel)}</span>`
+                   :`<span class="pill warn">Hotelnummer fehlt</span>`}
+          <span class="small muted">${leute.length}/${r.betten}${frei>0?` · ${frei} frei`:""}</span>
+        </div>
+        ${leute.length? `<div class="list">${leute.map(p=>`<div class="item">
+            <div class="grow"><span class="name">${esc(p.name)}</span></div>
+            ${merkmalHtml(p)}
+          </div>`).join("")}</div>`
+          : `<div class="small muted" style="padding-left:6px">leer</div>`}
+      </div>`;
+    }).join("");
+    const rest = nachName(cur.people.filter(p=>!p.roomId));
+    if(rest.length) el.innerHTML += `<div class="note warn">Ohne Zimmer:
+      ${rest.map(p=>esc(p.name)).join(", ")}</div>`;
+  }
+}
+
+/* ---------- Protokoll ---------- */
+function renderProto(){
+  const el = $("#protoListe");
+  if(cur.log.length===0){ el.innerHTML = `<div class="empty">Noch nichts passiert.</div>`; return; }
+  const zeit = at => new Date(at).toLocaleString("de-DE",
+    {day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"});
+  el.innerHTML = cur.log.slice().reverse().map(l=>{
+    const farbe = {zug:"ok", undo:"bad", tausch:"info", fest:"fest"}[l.typ] || "";
+    return `<div class="item">
+      <span class="pill ${farbe} tiny nowrap">${zeit(l.at)}</span>
+      <div class="grow"><span>${esc(l.text)}</span></div>
+    </div>`;
+  }).join("");
+}
+
+/* ---------- Drucken ---------- */
+function drucke(modus){
+  const kopf = `<div class="druck-kopf"><h1>${esc(cur.name)}</h1>
+    <div class="small">${modus==="packliste"?"Packliste für die Trommel":"Zimmerbelegung"} · Stand ${heute()}</div></div>`;
+  let html = "";
+
+  if(modus==="packliste"){
+    const zeilen = zimmerSort().map(r=>{
+      const k = kugelnStart(r), f = festIn(r);
+      return `<tr><td><strong>${esc(r.los)}</strong></td><td>${r.betten}</td>
+        <td>${f||"–"}</td><td><strong>${k}×</strong> Kugel ${esc(r.los)}</td></tr>`;
+    }).join("");
+    const summe = cur.rooms.reduce((s,r)=>s+kugelnStart(r),0);
+    html = `<div class="blatt">${kopf}
+      <table class="druck"><thead><tr><th>Zimmer</th><th>Betten</th><th>fest vergeben</th>
+        <th>in die Trommel</th></tr></thead><tbody>${zeilen}</tbody></table>
+      <p style="margin-top:12pt"><strong>Zusammen ${summe} Kugeln.</strong>
+        ${zieherGesamt()} Personen ziehen.</p></div>`;
+  }
+
+  if(modus==="liste"){
+    const proZimmer = zimmerSort().map(r=>{
+      const leute = nachName(cur.people.filter(p=>p.roomId===r.id));
+      return `<tr><td><strong>${esc(r.los)}</strong></td>
+        <td>${r.hotel?`<strong>${esc(r.hotel)}</strong>`:"–"}</td>
+        <td>${leute.map(p=>esc(p.name)).join(", ") || "<em>leer</em>"}</td></tr>`;
+    }).join("");
+    const proName = nachName(cur.people).map(p=>{
+      const r = p.roomId ? zimmerVon(p.roomId) : null;
+      return `<tr><td>${esc(p.name)}</td><td>${r?esc(r.los):"–"}</td>
+        <td>${r&&r.hotel?`<strong>${esc(r.hotel)}</strong>`:"–"}</td></tr>`;
+    }).join("");
+    html = `<div class="blatt">${kopf}
+      <table class="druck"><thead><tr><th>Kugel</th><th>Hotelzimmer</th><th>Wer</th></tr></thead>
+      <tbody>${proZimmer}</tbody></table></div>
+      <div class="blatt">${kopf}
+      <table class="druck"><thead><tr><th>Name</th><th>Kugel</th><th>Hotelzimmer</th></tr></thead>
+      <tbody>${proName}</tbody></table></div>`;
+  }
+
+  if(modus==="schilder"){
+    html = zimmerSort().filter(r=>belegtIn(r)>0).map(r=>{
+      const leute = nachName(cur.people.filter(p=>p.roomId===r.id));
+      return `<div class="blatt"><div class="schild">
+        <p class="zi">${esc(r.hotel || r.los)}</p>
+        ${r.hotel?`<p class="hot">Kugel ${esc(r.los)}</p>`:""}
+        <ul>${leute.map(p=>`<li>${esc(p.name)}</li>`).join("")}</ul>
+      </div></div>`;
+    }).join("");
+    if(!html){ toast("Noch keine belegten Zimmer."); return; }
+  }
+
+  $("#druck").innerHTML = html;
+  setTimeout(()=>window.print(), 60);
+}
+
+/* ---------- Sichern / Einlesen ---------- */
+function sichern(){
+  const daten = JSON.stringify(DB, null, 1);
+  const name = "auslosung-" + new Date().toISOString().slice(0,10) + ".json";
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([daten], {type:"application/json"}));
+  a.download = name; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
+  toast("Sicherung gespeichert: " + name);
+}
+
+async function einlesen(datei){
+  let d;
+  try{ d = JSON.parse(await datei.text()); }
+  catch(e){ toast("Datei nicht lesbar."); return; }
+  if(!d || !Array.isArray(d.trips)){ toast("Das ist keine Sicherung dieser App."); return; }
+  let neu=0, ersetzt=0;
+  for(const t of d.trips){
+    if(!t || !t.id) continue;
+    t.rooms  = Array.isArray(t.rooms)?t.rooms:[];
+    t.people = Array.isArray(t.people)?t.people:[];
+    t.log    = Array.isArray(t.log)?t.log:[];
+    const ix = DB.trips.findIndex(x=>x.id===t.id);
+    if(ix>=0){
+      if(!await frage("Fahrt schon vorhanden",
+        `„${t.name}“ gibt es hier schon. Durch die Version aus der Datei ersetzen?`, "Ersetzen")) continue;
+      DB.trips[ix] = t; ersetzt++;
+    }else{ DB.trips.push(t); neu++; }
+  }
+  save(); zeigeFahrten();
+  toast(`${neu} Fahrt${neu===1?"":"en"} eingelesen${ersetzt?`, ${ersetzt} ersetzt`:""}.`);
+}
+
+/* ---------- Bedienung ---------- */
+document.addEventListener("click", async ev => {
+  const t = ev.target.closest("[data-trip],[data-zbearb],[data-zloesch],[data-pfest],[data-ploesch],[data-zieht],[data-kachel]");
+  if(!t) return;
+  const d = t.dataset;
+
+  if(d.trip)   return oeffne(d.trip);
+  if(d.zieht){ waehlt = personVon(d.zieht); return render(); }
+  if(d.kachel){ const r = zimmerVon(d.kachel); if(r && waehlt) ziehe(waehlt, r); return; }
+
+  if(d.zbearb){
+    const r = zimmerVon(d.zbearb); if(!r) return;
+    const los = await abfrage(`Zimmer ${r.los}`, "Kugelnummer", r.los);
+    if(los===null) return;
+    const neu = String(los).trim();
+    if(neu && neu.toLowerCase()!==r.los.toLowerCase() &&
+       cur.rooms.some(x=>x.id!==r.id && x.los.toLowerCase()===neu.toLowerCase())){
+      toast(`Zimmer ${neu} gibt es schon`); return;
+    }
+    const betten = await abfrage(`Zimmer ${neu||r.los}`, "Anzahl Betten", r.betten);
+    if(betten===null) return;
+    const b = Math.max(1, Math.min(20, parseInt(betten,10)||r.betten));
+    const alt = r.los;
+    if(neu) r.los = neu;
+    r.betten = b;
+    log("zimmer", `Zimmer ${alt} geändert: Kugel ${r.los}, ${b} Betten`);
+    return render();
+  }
+
+  if(d.zloesch){
+    const r = zimmerVon(d.zloesch); if(!r) return;
+    const drin = cur.people.filter(p=>p.roomId===r.id || p.festRoomId===r.id);
+    const ok = await frage("Zimmer löschen?",
+      drin.length ? `Zimmer ${r.los} ist ${drin.length} Person${drin.length===1?"":"en"} zugewiesen. `+
+                    `Die verlier${drin.length===1?"t":"en"} das Zimmer.`
+                  : `Zimmer ${r.los} wirklich löschen?`, "Löschen");
+    if(!ok) return;
+    drin.forEach(p=>{
+      if(p.roomId===r.id) p.roomId = null;
+      if(p.festRoomId===r.id) p.festRoomId = null;
+      if(p.losRoomId===r.id) p.losRoomId = null;
+    });
+    cur.rooms = cur.rooms.filter(x=>x.id!==r.id);
+    log("zimmer", `Zimmer ${r.los} gelöscht`);
+    return render();
+  }
+
+  if(d.pfest){
+    const p = personVon(d.pfest); if(!p) return;
+    if(cur.rooms.length===0){ toast("Erst Zimmer anlegen."); return; }
+    if(p.losRoomId){ toast(`${p.name} hat schon gezogen – im Ergebnis tauschen.`); return; }
+    $("#festWer").textContent = p.name;
+    $("#festZimmer").innerHTML = `<option value="">— keine Vorbelegung —</option>` +
+      zimmerSort().map(r=>{
+        const frei = r.betten - festIn(r) - gezogenIn(r) + (p.festRoomId===r.id?1:0);
+        return `<option value="${r.id}" ${p.festRoomId===r.id?"selected":""} ${frei<=0?"disabled":""}>
+          Zimmer ${esc(r.los)} — ${frei>0?`${frei} Bett${frei===1?"":"en"} frei`:"voll"}</option>`;
+      }).join("");
+    const dlg = $("#dlgFest");
+    dlg.onclose = () => {
+      if(dlg.returnValue!=="ok") return;
+      const rid = $("#festZimmer").value || null;
+      const alt = p.festRoomId;
+      p.festRoomId = rid;
+      p.roomId = rid;
+      log("fest", rid ? `${p.name} fest auf Zimmer ${zimmerName(rid)}`
+                      : `Vorbelegung für ${p.name} aufgehoben${alt?` (war Zimmer ${zimmerName(alt)})`:""}`);
+      render();
+    };
+    return dlg.showModal();
+  }
+
+  if(d.ploesch){
+    const p = personVon(d.ploesch); if(!p) return;
+    if(!await frage("Person löschen?", `${p.name} von der Liste nehmen?`, "Löschen")) return;
+    cur.people = cur.people.filter(x=>x.id!==p.id);
+    log("person", `${p.name} von der Liste genommen`);
+    return render();
+  }
+});
+
+/* Fahrten */
+$("#btnFahrtAnlegen").onclick = () => {
+  const inp = $("#neueFahrt");
+  const name = inp.value.trim();
+  if(!name){ toast("Bitte einen Namen eintragen."); inp.focus(); return; }
+  const t = {id:id(), name, createdAt:Date.now(), rooms:[], people:[], log:[]};
+  t.log.push({at:Date.now(), typ:"fahrt", text:`Fahrt „${name}“ angelegt`});
+  DB.trips.push(t); save(); inp.value = "";
+  oeffne(t.id, "zimmer");
+};
+$("#neueFahrt").addEventListener("keydown", e => { if(e.key==="Enter") $("#btnFahrtAnlegen").click(); });
+$("#btnZurueck").onclick = () => { save(); zeigeFahrten(); };
+$$("#tabs .tab").forEach(b => b.onclick = () => zeigeTab(b.dataset.tab));
+
+/* Zimmer */
+$("#btnZimmerAnlegen").onclick = () => {
+  if(zimmerAnlegen($("#zLos").value, $("#zBetten").value, $("#zNotiz").value)){
+    const naechste = parseInt($("#zLos").value,10);
+    $("#zLos").value = isNaN(naechste) ? "" : String(naechste+1);
+    $("#zNotiz").value = "";
+    render(); $("#zLos").focus();
+  }
+};
+$("#zLos").addEventListener("keydown", e => { if(e.key==="Enter") $("#btnZimmerAnlegen").click(); });
+$("#zNotiz").addEventListener("keydown", e => { if(e.key==="Enter") $("#btnZimmerAnlegen").click(); });
+$("#btnZimmerSerie").onclick = () => {
+  const dlg = $("#dlgSerie");
+  dlg.onclose = () => {
+    if(dlg.returnValue!=="ok") return;
+    const von = parseInt($("#serieVon").value,10), bis = parseInt($("#serieBis").value,10);
+    const bet = parseInt($("#serieBetten").value,10);
+    if(isNaN(von)||isNaN(bis)||bis<von||bis-von>200){ toast("Bereich prüfen."); return; }
+    let n=0; for(let i=von;i<=bis;i++) if(zimmerAnlegen(i, bet, "")) n++;
+    render(); toast(`${n} Zimmer angelegt.`);
+  };
+  dlg.showModal();
+};
+
+/* Teilnehmer */
+$("#btnPersonAnlegen").onclick = () => {
+  const inp = $("#neuePerson");
+  if(personAnlegen(inp.value)){ log("person", `${inp.value.trim()} hinzugefügt`); inp.value=""; render(); }
+  inp.focus();
+};
+$("#neuePerson").addEventListener("keydown", e => { if(e.key==="Enter") $("#btnPersonAnlegen").click(); });
+$("#sucheLeute").addEventListener("input", e => { filterLeute = e.target.value; renderLeute(); });
+$("#btnListeEinfuegen").onclick = () => {
+  const dlg = $("#dlgListe"); $("#listeText").value = "";
+  dlg.onclose = () => {
+    if(dlg.returnValue!=="ok") return;
+    const zeilen = $("#listeText").value.split(/[\r\n]+/).map(s=>s.replace(/^[\s\-–•*\d.)]+/,"").trim());
+    let n=0; zeilen.forEach(z=>{ if(z && personAnlegen(z)) n++; });
+    if(n) log("person", `${n} Namen aus einer Liste übernommen`);
+    render(); toast(n ? `${n} Namen übernommen.` : "Nichts Neues dabei.");
+  };
+  dlg.showModal(); setTimeout(()=>$("#listeText").focus(), 40);
+};
+
+/* Auslosung */
+$("#sucheZiehen").addEventListener("input", e => { filterZiehen = e.target.value; renderLosen(); });
+$("#btnAbbrechen").onclick   = () => { waehlt = null; render(); };
+$("#btnDigital").onclick     = () => { if(waehlt) digitalZiehen(); };
+$("#btnRueckgaengig").onclick= () => rueckgaengig();
+$("#btnPackliste").onclick   = () => drucke("packliste");
+$("#btnZufallsperson").onclick = () => {
+  const offen = offeneLeute();
+  if(offen.length===0){ toast("Alle haben gezogen."); return; }
+  const w = new Uint32Array(1); crypto.getRandomValues(w);
+  waehlt = offen[w[0] % offen.length];
+  render(); toast(`${waehlt.name} fängt an.`);
+};
+
+/* Ergebnis */
+document.addEventListener("input", e => {
+  const el = e.target.closest("[data-hotel]");
+  if(!el || !cur) return;
+  const r = zimmerVon(el.dataset.hotel); if(!r) return;
+  const wert = el.value.trim();
+  if(wert === r.hotel) return;
+  r.hotel = wert;
+  renderErgHinweise();
+  renderBelegung();
+  clearTimeout(el._t);
+  el._t = setTimeout(()=>{ log("hotel", `Zimmer ${r.los} ist im Hotel Nummer ${wert||"—"}`); save(); }, 900);
+});
+$("#btnSortZimmer").onclick = () => { sortNach = "zimmer"; renderErg(); };
+$("#btnSortName").onclick   = () => { sortNach = "name";   renderErg(); };
+$("#btnDruckListe").onclick    = () => drucke("liste");
+$("#btnDruckSchilder").onclick = () => drucke("schilder");
+$("#btnTausch").onclick = () => {
+  const mitZimmer = nachName(cur.people.filter(p=>p.roomId));
+  if(mitZimmer.length<2){ toast("Dafür braucht es zwei Personen mit Zimmer."); return; }
+  const opt = p => `<option value="${p.id}">${esc(p.name)} — Zimmer ${esc(zimmerName(p.roomId))}</option>`;
+  $("#tauschA").innerHTML = mitZimmer.map(opt).join("");
+  $("#tauschB").innerHTML = mitZimmer.map(opt).join("");
+  $("#tauschB").selectedIndex = 1;
+  $("#tauschHinweis").innerHTML = "";
+  const dlg = $("#dlgTausch");
+  dlg.onclose = () => {
+    if(dlg.returnValue!=="ok") return;
+    const a = personVon($("#tauschA").value), b = personVon($("#tauschB").value);
+    if(!a || !b || a.id===b.id){ toast("Zwei verschiedene Personen wählen."); return; }
+    const za = a.roomId, zb = b.roomId;
+    if(za === zb){ toast(`${a.name} und ${b.name} liegen ohnehin im selben Zimmer.`); return; }
+    a.roomId = zb; b.roomId = za;
+    log("tausch", `${a.name} und ${b.name} getauscht: ${a.name} nach Zimmer ${zimmerName(zb)}, `+
+                  `${b.name} nach Zimmer ${zimmerName(za)}`);
+    render(); toast("Getauscht.");
+  };
+  dlg.showModal();
+};
+
+/* Fahrt verwalten */
+$("#btnFahrtUmbenennen").onclick = async () => {
+  const neu = await abfrage("Fahrt umbenennen", "Name", cur.name);
+  if(!neu) return;
+  log("fahrt", `Fahrt umbenannt: „${cur.name}“ → „${neu}“`);
+  cur.name = neu; render();
+};
+$("#btnZiehungLeeren").onclick = async () => {
+  const gez = cur.people.filter(p=>p.losRoomId).length;
+  if(!gez){ toast("Es wurde noch nichts gezogen."); return; }
+  if(!await frage("Ziehung zurücksetzen?",
+    `Alle ${gez} gezogenen Zimmer werden gelöscht. Feste Vorbelegungen und die Zimmerliste bleiben.`,
+    "Zurücksetzen")) return;
+  cur.people.forEach(p=>{
+    p.losRoomId = null; p.digital = false;
+    p.roomId = p.festRoomId || null;
+  });
+  log("reset", `Ziehung zurückgesetzt (${gez} Züge verworfen)`);
+  render(); toast("Ziehung zurückgesetzt.");
+};
+$("#btnFahrtLoeschen").onclick = async () => {
+  if(!await frage("Fahrt löschen?",
+    `„${cur.name}“ mit allen Teilnehmern, Zimmern und dem Protokoll endgültig löschen?`, "Löschen")) return;
+  DB.trips = DB.trips.filter(t=>t.id!==cur.id);
+  save(); zeigeFahrten(); toast("Fahrt gelöscht.");
+};
+
+/* Sichern / Einlesen */
+$("#btnSichern").onclick = () => sichern();
+$("#btnLaden").onclick   = () => $("#dateiLaden").click();
+$("#dateiLaden").addEventListener("change", e => {
+  const f = e.target.files && e.target.files[0];
+  if(f) einlesen(f);
+  e.target.value = "";
+});
+
+window.addEventListener("beforeprint", () => { if(!$("#druck").innerHTML && cur) drucke("liste"); });
+
+/* ---------- Start ---------- */
+load();
+zeigeFahrten();
+</script>
