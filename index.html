@@ -3499,6 +3499,33 @@ function screenBestand(){
           '<div class="btn-row"><button class="btn btn-sm btn-danger" data-act="sicherung-einspielen">'+icon('refresh')+'Diesen Stand einspielen</button>'+
           '<button class="btn btn-sm" data-act="sicherung-schliessen">Schließen</button></div></div>' : '')+
       '</div></div>'+
+    '<div class="section"><span class="eyebrow">4 · Leer anfangen</span>'+
+      (() => {
+        const u = loeschUmfang();
+        const nochNieGesichert = sicherungAlter() === null;
+        return '<div class="card pad stack" style="gap:12px">'+
+          '<p class="hint">Ist die Testphase vorbei, kommt hier der Demo-Bestand weg. '+
+          'Eure Einstellungen, Kategorien und Etikettenformate bleiben in jedem Fall erhalten.</p>'+
+          (nochNieGesichert
+            ? '<div class="notice overdue">'+icon('alert')+'<span><span class="n-title">Erst sichern</span>'+
+              '<span class="n-body">In diesem Browser wurde noch nie gesichert. Löschen lässt sich nicht rückgängig machen – '+
+              'legt oben unter „3 · Sicherung" eine Datei an, dann sind die Knöpfe hier frei.</span></span></div>'
+            : '')+
+          '<div class="btn-row">'+
+            '<button class="btn btn-danger" data-act="alles-buecher-weg"'+(nochNieGesichert?' disabled':'')+'>'+
+              icon('trash')+'Alle Bücher löschen ('+u.titel+')</button>'+
+            '<button class="btn btn-danger" data-act="alles-kinder-weg"'+(nochNieGesichert?' disabled':'')+'>'+
+              icon('trash')+'Alle Kinder löschen ('+u.kinder+')</button>'+
+            '<button class="btn btn-danger" data-act="alles-weg"'+(nochNieGesichert?' disabled':'')+'>'+
+              icon('trash')+'Ganz leer anfangen</button>'+
+          '</div>'+
+          '<p class="hint">Zurzeit im Bestand: '+plural(u.titel,'Titel','Titel')+' mit '+
+          plural(u.exemplare,'Exemplar','Exemplaren')+', '+plural(u.kinder,'Kind','Kindern')+' in '+
+          plural(u.gruppen,'Gruppe','Gruppen')+
+          (u.ausleihen ? ', davon '+plural(u.ausleihen,'Ausleihe','Ausleihen')+' offen' : '')+'.</p>'+
+        '</div>';
+      })()+
+    '</div>'+
   '</div>';
 }
 
@@ -4751,7 +4778,7 @@ function etikettZelle(c, format){
    Drei Wege in den eigenen Bestand: ISBN-Liste (Daten kommen von der DNB),
    Tabelle fuer Buecher ohne ISBN, und eine vollstaendige Sicherung.
    ======================================================================== */
-var FASSUNG = '31.08.2026 · 26';
+var FASSUNG = '08.09.2026 · 27';
 var bestand = { isbnText:'', isbnLauf:null, isbnErgebnis:null, tabText:'', tabErgebnis:null, sicherung:null };
 
 function isbnListeLesen(text){
@@ -4851,6 +4878,44 @@ function tabelleUebernehmen(){
   bestand.tabErgebnis = null; bestand.tabText = '';
   render();
   toast(titelZahl+' Titel mit '+exemplare+' Exemplaren angelegt.');
+}
+
+/* --------------------------------------------------------- Leer anfangen
+   Nach der Testphase soll der Demo-Bestand weg, ohne dass die eingerichteten
+   Gruppen, Kategorien und Einstellungen mitgehen. Deshalb drei getrennte
+   Schnitte statt eines grossen roten Knopfes - und jeder nennt vorher, was er
+   mitnimmt. Ausgeliehene Exemplare haengen an Buch und Kind zugleich; wird
+   eine Seite geloescht, muss die Ausleihe mit, sonst bleiben Karteileichen. */
+function loeschUmfang(){
+  return {
+    titel: S.titles.length,
+    exemplare: S.copies.length,
+    kinder: S.children.length,
+    gruppen: S.groups.length,
+    ausleihen: S.loans.filter(l => !l.returnedAt).length
+  };
+}
+function buecherLoeschen(){
+  const n = S.titles.length, e = S.copies.length;
+  /* Jede Ausleihe haengt an einem Exemplar - gehen die Buecher, gehen sie mit. */
+  S.loans = [];
+  S.copies = [];
+  S.titles = [];
+  logAction('Alle Bücher gelöscht ('+n+' Titel, '+e+' Exemplare)');
+  save();
+}
+function kinderLoeschen(){
+  const n = S.children.length;
+  S.loans = [];
+  S.children = [];
+  logAction('Alle Kinder und Gruppenkonten gelöscht ('+n+')');
+  save();
+}
+function alleGruppenLoeschen(){
+  const n = S.groups.length;
+  S.groups = [];
+  logAction('Alle Gruppen gelöscht ('+n+')');
+  save();
 }
 
 /* Sicherung */
@@ -5440,6 +5505,40 @@ const ACTIONS = {
         () => toast('Sicherung kopiert – in eine Textdatei einfügen und verwahren.'),
         () => { bestand.sicherung = text; render(); toast('Kopieren nicht erlaubt – Text unten von Hand kopieren.'); });
     } else { bestand.sicherung = text; render(); toast('Text unten von Hand kopieren.'); }
+  },
+  'alles-buecher-weg': () => {
+    const u = loeschUmfang();
+    if (!u.titel){ toast('Es sind keine Bücher da.'); return; }
+    askConfirm({ title:'Alle Bücher löschen',
+      body: plural(u.titel,'Titel','Titel')+' mit '+plural(u.exemplare,'Exemplar','Exemplaren')+
+        (u.ausleihen ? ' und '+plural(u.ausleihen,'offene Ausleihe','offene Ausleihen') : '')+
+        ' werden gelöscht. Kinder, Gruppen, Kategorien und Einstellungen bleiben. '+
+        'Das lässt sich nur über eine Sicherung zurückholen.',
+      ok:'Bücher löschen', danger:true }, () => {
+      buecherLoeschen(); go('bestand'); toast('Bestand ist leer.');
+    });
+  },
+  'alles-kinder-weg': () => {
+    const u = loeschUmfang();
+    if (!u.kinder){ toast('Es sind keine Kinder angelegt.'); return; }
+    askConfirm({ title:'Alle Kinder löschen',
+      body: plural(u.kinder,'Kind','Kinder')+' samt Bibliothekskarten und allen Ausleihen werden gelöscht. '+
+        'Die Gruppen selbst und der Bestand bleiben.',
+      ok:'Kinder löschen', danger:true }, () => {
+      kinderLoeschen(); go('bestand'); toast('Alle Kinder gelöscht.');
+    });
+  },
+  'alles-weg': () => {
+    askConfirm({ title:'Ganz leer anfangen',
+      body:'Bücher, Kinder, Gruppen und der Verlauf werden gelöscht – die Kita startet leer. '+
+        'Name der Einrichtung, Ausleihregeln, Kategorien und die Druckeinrichtung bleiben erhalten.',
+      ok:'Alles löschen', danger:true }, () => {
+      buecherLoeschen(); kinderLoeschen(); alleGruppenLoeschen();
+      S.log = [];
+      logAction('Leer angefangen');
+      save(); go('start');
+      toast('KitaBib ist leer – ihr könnt mit eurem eigenen Bestand anfangen.');
+    });
   },
   'sicherung-einspielen': () => {
     const f = document.getElementById('sicherungFeld');
