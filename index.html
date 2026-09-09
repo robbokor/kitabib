@@ -1923,6 +1923,32 @@ function load(){
   return buildSeed();
 }
 function resetData(){ S = buildSeed(); save(); }
+
+/* ------------------------------------------------------ Dauerhafter Speicher
+   Safari raeumt den Speicher gewoehnlicher Webseiten auf, wenn sie eine Weile
+   nicht benutzt werden - ueber die Sommerschliessung waere ein muehsam
+   erfasster Bestand also weg. Dagegen gibt es genau eine Bitte an den Browser,
+   und die stellen wir. Gewaehrt wird sie nicht immer; wird sie es nicht,
+   sagen wir es auf dem Startbildschirm, statt es zu verschweigen. */
+var Speicher = {
+  dauerhaft: null,          /* null = noch nicht geprueft */
+  moeglich: function(){ return !!(navigator.storage && navigator.storage.persist); },
+  pruefen: function(){
+    var self = this;
+    if (!this.moeglich()){ this.dauerhaft = false; return Promise.resolve(false); }
+    return navigator.storage.persisted()
+      .then(function (schon) { return schon ? true : navigator.storage.persist(); })
+      .then(function (ok) { self.dauerhaft = !!ok; return self.dauerhaft; })
+      .catch(function () { self.dauerhaft = false; return false; });
+  },
+  /* Ein zweiter Anlauf nach einer echten Berührung: manche Browser gewaehren
+     die Bitte erst, wenn jemand die Seite erkennbar benutzt. */
+  nachfragen: function(){
+    if (this.dauerhaft || !this.moeglich()) return;
+    var self = this, vorher = this.dauerhaft;
+    this.pruefen().then(function (ok) { if (ok !== vorher) render(); });
+  }
+};
 function logAction(text){
   S.log.unshift({ ts: todayISO()+' '+pad(new Date().getHours())+':'+pad(new Date().getMinutes()), text });
   S.log = S.log.slice(0, 50);
@@ -2615,10 +2641,23 @@ function screenStart(){
   if (dueToday.length) notices.push({ cls:'calm', ic:'clock', t:plural(dueToday.length,'Buch ist','Bücher sind')+' heute fällig',
     b: dueToday.map(l => child(l.childId).name).join(', '), act:'' });
   if (sicherungFaellig()){
-    const alter = sicherungAlter();
-    notices.push({ cls:'todo', ic:'shield',
-      t: alter === null ? 'Noch keine Sicherung angelegt' : 'Letzte Sicherung vor '+plural(alter,'Tag','Tagen'),
-      b: 'Der Bestand liegt nur in diesem Browser – einmal in der Woche sichern genügt.',
+    const alter = sicherungAlter(), neu = ungesichert();
+    notices.push({ cls: neu >= 15 ? 'overdue' : 'todo', ic:'shield',
+      t: alter === null ? 'Noch keine Sicherung angelegt'
+         : alter === 0 ? 'Seit der letzten Sicherung ist einiges dazugekommen'
+         : 'Letzte Sicherung vor '+plural(alter,'Tag','Tagen'),
+      b: (neu ? (alter === null
+                  ? plural(neu,'Eintrag','Einträge')+' gibt es bisher nur hier. '
+                  : 'Seitdem sind '+plural(neu,'Eintrag','Einträge')+' dazugekommen, die es nur hier gibt. ') : '')+
+         'Der Bestand liegt allein in diesem Browser.',
+      act:'<button class="btn btn-sm" data-act="sicherung-oeffnen">'+icon('shield')+'Jetzt sichern</button>' });
+  }
+  /* Erst warnen, wenn wirklich etwas zu verlieren ist. */
+  if (Speicher.dauerhaft === false && (S.titles.length + S.children.length) > 0){
+    notices.push({ cls:'overdue', ic:'alert', t:'Dieser Browser darf den Speicher aufräumen',
+      b: 'Er hat KitaBib keinen dauerhaften Speicherplatz zugesagt. Wird die Seite länger nicht geöffnet, '+
+         'können die Daten verschwinden. Zwei Dinge helfen: KitaBib über „Teilen → Zum Home-Bildschirm" '+
+         'als App ablegen, und regelmäßig eine Sicherungsdatei anlegen.',
       act:'<button class="btn btn-sm" data-act="sicherung-oeffnen">'+icon('shield')+'Jetzt sichern</button>' });
   }
 
@@ -4778,7 +4817,7 @@ function etikettZelle(c, format){
    Drei Wege in den eigenen Bestand: ISBN-Liste (Daten kommen von der DNB),
    Tabelle fuer Buecher ohne ISBN, und eine vollstaendige Sicherung.
    ======================================================================== */
-var FASSUNG = '08.09.2026 · 27';
+var FASSUNG = '09.09.2026 · 28';
 var bestand = { isbnText:'', isbnLauf:null, isbnErgebnis:null, tabText:'', tabErgebnis:null, sicherung:null };
 
 function isbnListeLesen(text){
@@ -4926,8 +4965,8 @@ function sicherungErzeugen(){
    ein Hinweis ohne Anlass ist nur Rauschen. */
 function sicherungFaellig(){
   const letzte = S.org.letzteSicherung;
-  if (!letzte) return S.log.length > 2;
-  return daysDiff(letzte, todayISO()) >= 7;
+  if (!letzte) return S.log.length > 2 || S.titles.length > 0;
+  return daysDiff(letzte, todayISO()) >= 7 || ungesichert() >= 15;
 }
 function sicherungAlter(){
   const letzte = S.org.letzteSicherung;
@@ -4936,8 +4975,18 @@ function sicherungAlter(){
 }
 function sicherungVermerken(){
   S.org.letzteSicherung = todayISO();
+  S.org.standBeiSicherung = { titel:S.titles.length, exemplare:S.copies.length, kinder:S.children.length };
   logAction('Sicherung erstellt');
   save();
+}
+/* Wie viel Arbeit steckt seit der letzten Sicherung im Geraet? Tage allein
+   sagen das nicht - wer an einem Nachmittag 200 Buecher erfasst, hat mehr zu
+   verlieren als jemand, der zwei Wochen nichts getan hat. */
+function ungesichert(){
+  const v = S.org.standBeiSicherung;
+  if (!v) return S.titles.length + S.children.length;
+  return Math.max(0, (S.titles.length - (v.titel||0)))
+       + Math.max(0, (S.children.length - (v.kinder||0)));
 }
 function sicherungDateiname(){
   return 'kitabib-sicherung-' + todayISO() + '.json';
@@ -6077,4 +6126,12 @@ document.addEventListener('keydown', ev => {
 S = load();
 render();
 fassungPruefen(true);
+
+/* Den Browser um dauerhaften Speicher bitten - einmal beim Start und noch
+   einmal nach der ersten Beruehrung, weil manche Browser erst dann zusagen. */
+Speicher.pruefen().then(function (ok) { if (!ok) render(); });
+document.addEventListener('pointerdown', function einmal(){
+  document.removeEventListener('pointerdown', einmal);
+  Speicher.nachfragen();
+}, { once:true });
 </script>
