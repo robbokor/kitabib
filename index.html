@@ -1770,6 +1770,81 @@ function isbn13(twelve){ const full = twelve + isbnCheck(twelve); return full.re
 /* -------------------------------------------------------- Paedagogische Kategorien */
 /* Vorschlag aus dem Konzept, Kapitel 5.3 – ab hier frei aenderbar durch die
    Einrichtung. Jede Kita hat eigene Schwerpunkte. */
+/* ------------------------------------------------------------- Bereiche
+   Kategorien und Bereiche sind zwei verschiedene Dinge, und das zu trennen
+   ist der ganze Witz: Ein Buch kann viele Themen haben, steht im Regal aber
+   an genau einem Platz. Deshalb traegt der Bereich ein Kuerzel, das vorne in
+   der Exemplarnummer steht - wer ein Buch zurueckraeumt, liest am Etikett ab,
+   wohin es gehoert, ohne die App zu befragen. */
+const BEREICHE_VORGABE = [
+  { id:'ber-bb', name:'Bilderbücher', kuerzel:'BB' },
+  { id:'ber-re', name:'Religion',     kuerzel:'RE' },
+  { id:'ber-sa', name:'Sachbücher',   kuerzel:'SA' }
+];
+function bereiche(){
+  if (!Array.isArray(S.bereiche)) S.bereiche = BEREICHE_VORGABE.map(b => Object.assign({}, b));
+  return S.bereiche;
+}
+function bereich(id){ return bereiche().filter(b => b.id === id)[0] || null; }
+function bereichBenutzt(id){ return S.titles.filter(t => t.bereichId === id).length; }
+function bereichName(id){ const b = bereich(id); return b ? b.name : 'Ohne Bereich'; }
+/* Das Kuerzel steht auf jedem Etikett - es muss kurz, eindeutig und ohne
+   Sonderzeichen sein, sonst ist die Nummer im Regal nicht abzulesen. */
+function kuerzelPruefen(roh, eigeneId){
+  const k = (roh||'').trim().toUpperCase().replace(/[^A-ZÄÖÜ0-9]/g,'');
+  if (k.length < 1) return { fehler:'Das Kürzel braucht mindestens einen Buchstaben.' };
+  if (k.length > 3) return { fehler:'Höchstens drei Zeichen – sonst wird die Nummer auf dem Etikett zu lang.' };
+  if (bereiche().some(b => b.id !== eigeneId && b.kuerzel === k))
+    return { fehler:'Das Kürzel „'+k+'" ist schon vergeben.' };
+  return { kuerzel:k };
+}
+function bereichAnlegen(name, kuerzel){
+  const n = (name||'').trim();
+  if (!n) return 'Der Bereich braucht einen Namen.';
+  if (bereiche().some(b => b.name.toLowerCase() === n.toLowerCase())) return '„'+n+'" gibt es schon.';
+  const k = kuerzelPruefen(kuerzel);
+  if (k.fehler) return k.fehler;
+  bereiche().push({ id:uid('ber'), name:n, kuerzel:k.kuerzel });
+  logAction('Bereich "'+n+'" ('+k.kuerzel+') angelegt');
+  save();
+  return null;
+}
+
+/* Die laufende Nummer zaehlt je Bereich - so faengt jedes Regalfach bei 1 an,
+   wie es in einer Kita ohnehin gemacht wird. Sie steht am Titel und wird nie
+   aus der Listenposition abgeleitet: sonst ruecken beim Loeschen eines Buches
+   alle nach und zwei Etiketten tragen dieselbe Nummer. */
+function naechsteNummer(bereichId, ausser){
+  let hoechste = 0;
+  S.titles.forEach(t => {
+    if (ausser && t.id === ausser) return;
+    if ((t.bereichId || '') !== (bereichId || '')) return;
+    if (+t.nr > hoechste) hoechste = +t.nr;
+  });
+  return hoechste + 1;
+}
+function invPraefix(bereichId){
+  const b = bereich(bereichId);
+  return b && b.kuerzel ? b.kuerzel : 'B';
+}
+function invNummer(t, exemplar){
+  return invPraefix(t.bereichId) + '-' + String(t.nr || 1).padStart(3,'0') + '-' + exemplar;
+}
+/* Wechselt ein Buch den Bereich, wechselt seine Nummer mit - und die schon
+   gedruckten Etiketten stimmen nicht mehr. Statt das zu verschweigen, gelten
+   sie wieder als ungedruckt und tauchen unter "Noch nicht gedruckt" auf. */
+function titelUmnummerieren(t, neuerBereichId){
+  if ((t.bereichId||'') === (neuerBereichId||'')) return 0;
+  /* Erst die freie Nummer im Zielbereich holen, dann umziehen - sonst zaehlt
+     sich das Buch selbst mit und das erste Buch eines Bereichs bekommt die 2. */
+  const neueNr = naechsteNummer(neuerBereichId || '', t.id);
+  t.bereichId = neuerBereichId || '';
+  t.nr = neueNr;
+  const eigene = copiesOfTitle(t.id);
+  eigene.forEach((c, i) => { c.inv = invNummer(t, i+1); c.etikettAm = null; });
+  return eigene.length;
+}
+
 const KATEGORIEN_VORGABE = ['Gefühle','Freundschaft','Familie','Natur','Tiere','Eingewöhnung','Tod und Trauer','Diversität','Sprache','Schule'];
 function kategorien(){
   if (!S.categories || !S.categories.length) S.categories = KATEGORIEN_VORGABE.slice();
@@ -1868,7 +1943,8 @@ function buildSeed(){
     titles.push({
       id, title:t[0], author:t[1], illustrator:t[2], publisher:t[3], year:t[4],
       ageMin:t[5], ageMax:t[6], cats:t[7].slice(), blurb:t[8], isbn:isbn13('9783'+t[9].slice(0,8)),
-      lang:'Deutsch', coverIdx:i % COVER_PALETTE.length
+      lang:'Deutsch', coverIdx:i % COVER_PALETTE.length,
+      bereichId:'', nr:i+1
     });
     for (let c=0;c<SEED_COPIES[i];c++){
       copies.push({ id:'c'+id+'_'+(c+1), titleId:id, inv:'B-'+String(i+1).padStart(3,'0')+'-'+(c+1),
@@ -1917,10 +1993,29 @@ function load(){
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw){
       const parsed = JSON.parse(raw);
-      if (parsed && parsed.titles && parsed.children) return parsed;
+      if (parsed && parsed.titles && parsed.children) return nachruesten(parsed);
     }
   } catch (e) { /* beschaedigt oder gesperrt: Demo-Daten */ }
   return buildSeed();
+}
+/* Aeltere Staende kennen weder Bereich noch Nummer. Die Nummer holen wir aus
+   der vorhandenen Exemplarnummer, damit schon geklebte Etiketten weiter
+   stimmen; einen Bereich bekommt niemand zugewiesen, den waehlt die Kita. */
+function nachruesten(z){
+  if (!Array.isArray(z.bereiche)) z.bereiche = BEREICHE_VORGABE.map(b => Object.assign({}, b));
+  let hoechste = 0;
+  z.titles.forEach(t => {
+    if (t.bereichId === undefined) t.bereichId = '';
+    if (t.nr === undefined){
+      const eigenes = z.copies.filter(c => c.titleId === t.id)[0];
+      const m = eigenes && /^[A-Za-zÄÖÜäöü]*-(\d+)-/.exec(eigenes.inv || '');
+      t.nr = m ? +m[1] : 0;
+    }
+    if (+t.nr > hoechste) hoechste = +t.nr;
+  });
+  /* Titel ohne lesbare Nummer hinten anhaengen, nie doppelt vergeben. */
+  z.titles.forEach(t => { if (!+t.nr) t.nr = ++hoechste; });
+  return z;
 }
 function resetData(){ S = buildSeed(); save(); }
 
@@ -2744,6 +2839,13 @@ function screenBook(){
         '<div class="r-sub" style="margin-top:14px">'+esc(t.publisher)+' · '+t.year+' · '+esc(t.lang)+' · ISBN '+esc(t.isbn)+'</div>'+
       '</div>'+
     '</div>'+
+    '<div class="section"><span class="eyebrow">Platz im Regal</span>'+
+      '<div class="card pad" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">'+
+        '<span class="r-title inv" style="font-size:17px">'+esc(invPraefix(t.bereichId))+'</span>'+
+        '<span class="r-sub" style="flex:1;min-width:140px">'+esc(bereichName(t.bereichId))+
+          (t.bereichId ? '' : ' – die Nummer beginnt mit B')+'</span>'+
+        '<button class="btn btn-sm" data-act="buch-bereich" data-id="'+t.id+'">Bereich wählen</button>'+
+      '</div></div>'+
     '<div class="section"><span class="eyebrow">Exemplare ('+cs.length+')</span>'+
       '<div class="list">'+cs.map(c => {
         const l = loanOfCopy(c.id), over = l && isOverdue(l);
@@ -2950,6 +3052,7 @@ function screenMore(){
   const items = [
     ['settings','Einstellungen','Ausleihdauer, Grenzen, Einrichtungsname','more', true],
     ['groups','Gruppen','Anlegen, umbenennen','users', true],
+    ['bereiche','Bereiche im Regal','Bilderbücher, Religion, Sachbücher – das Kürzel steht in der Nummer','books', true],
     ['kategorien','Kategorien','Pädagogische Schlagwörter pflegen','label', true],
     ['cards','Bibliothekskarten','Karten für Gruppen drucken','card', false],
     ['labels','QR-Etiketten','Etiketten für Exemplare drucken','label', false],
@@ -3524,6 +3627,18 @@ function screenBestand(){
   return '<div class="stack">'+backTo('more','Mehr')+
     '<div><h1 class="screen-title">Bestand übernehmen</h1>'+
     '<p class="screen-sub">Eure echten Bücher einlesen – und alles jederzeit sichern</p></div>'+
+    (bereiche().length ? '<div class="section"><span class="eyebrow">Bereich für diesen Durchgang</span>'+
+      '<div class="card pad stack" style="gap:10px">'+
+        '<p class="hint">Alles, was ihr jetzt erfasst, kommt in diesen Bereich – so müsst ihr nicht Buch für Buch '+
+        'zuordnen. Erfasst ein Regalfach nach dem anderen, dann stimmt es von selbst.</p>'+
+        '<div class="toggle-row">'+
+          '<button class="toggle" data-import-bereich="" aria-pressed="'+(bestand.bereichId?'false':'true')+'">Ohne Bereich</button>'+
+          bereiche().map(b=>'<button class="toggle" data-import-bereich="'+b.id+'" aria-pressed="'+
+            (bestand.bereichId===b.id?'true':'false')+'">'+esc(b.kuerzel)+' · '+esc(b.name)+'</button>').join('')+
+        '</div>'+
+        '<p class="hint">Nächste Nummer: <b>'+esc(invPraefix(bestand.bereichId))+'-'+
+          String(naechsteNummer(bestand.bereichId)).padStart(3,'0')+'-1</b></p>'+
+      '</div></div>' : '')+
     '<div class="section"><span class="eyebrow">1 · Bücher mit ISBN</span>'+isbnBlock+'</div>'+
     '<div class="section"><span class="eyebrow">2 · Bücher ohne ISBN</span>'+tabBlock+'</div>'+
     '<div class="section"><span class="eyebrow">3 · Sicherung</span>'+
@@ -3821,6 +3936,34 @@ function screenKinderImport(){
     '<div class="btn-row"><button class="btn" data-act="import-verwerfen">Abbrechen</button>'+
       '<button class="btn btn-primary" style="flex:1" data-act="import-uebernehmen"'+(a.neu.length?'':' disabled')+'>'+
       icon('check')+plural(a.neu.length,'Kind','Kinder')+' anlegen</button></div>'+
+  '</div>';
+}
+
+function screenBereiche(){
+  const liste = bereiche();
+  const ohne = S.titles.filter(t => !t.bereichId).length;
+  return '<div class="stack">'+backTo('more','Mehr')+
+    '<div class="head-row"><div><h1 class="screen-title">Bereiche im Regal</h1>'+
+      '<p class="screen-sub">'+plural(liste.length,'Bereich','Bereiche')+
+      (ohne ? ' · '+plural(ohne,'Buch','Bücher')+' noch ohne Bereich' : '')+'</p></div>'+
+      '<button class="btn btn-sm" data-act="bereich-neu">'+icon('plus')+'Bereich anlegen</button></div>'+
+    '<div class="notice calm">'+icon('info')+'<span><span class="n-title">Wozu das Kürzel gut ist</span>'+
+      '<span class="n-body">Das Kürzel steht vorne in jeder Exemplarnummer – aus <b>B-001-1</b> wird etwa '+
+      '<b>BB-001-1</b>. Wer ein Buch zurückräumt, sieht am Etikett, in welches Fach es gehört, ohne die App zu fragen. '+
+      'Jeder Bereich zählt bei 1 an.</span></span></div>'+
+    '<div class="list">'+liste.map(b => {
+      const n = bereichBenutzt(b.id);
+      return '<div class="row"><span class="r-main">'+
+        '<span class="r-title inv">'+esc(b.kuerzel)+'</span>'+
+        '<span class="r-sub">'+esc(b.name)+' · '+(n ? plural(n,'Buch','Bücher') : 'noch leer')+'</span></span>'+
+        '<span class="r-side">'+
+          '<button class="btn btn-sm" data-act="bereich-aendern" data-id="'+b.id+'">Ändern</button>'+
+          '<button class="btn btn-sm btn-danger" data-act="bereich-weg" data-id="'+b.id+'">Löschen</button>'+
+        '</span></div>';
+    }).join('')+'</div>'+
+    (ohne ? '<p class="hint">'+plural(ohne,'Buch','Bücher')+' ohne Bereich tragen weiter ein schlichtes <b>B</b> in der '+
+      'Nummer. In der Bibliothek lässt sich für jedes Buch einer wählen – die Nummer wird dann neu vergeben und das '+
+      'Etikett gilt wieder als ungedruckt.</p>' : '')+
   '</div>';
 }
 
@@ -4817,8 +4960,8 @@ function etikettZelle(c, format){
    Drei Wege in den eigenen Bestand: ISBN-Liste (Daten kommen von der DNB),
    Tabelle fuer Buecher ohne ISBN, und eine vollstaendige Sicherung.
    ======================================================================== */
-var FASSUNG = '09.09.2026 · 28';
-var bestand = { isbnText:'', isbnLauf:null, isbnErgebnis:null, tabText:'', tabErgebnis:null, sicherung:null };
+var FASSUNG = '11.09.2026 · 29';
+var bestand = { isbnText:'', isbnLauf:null, isbnErgebnis:null, tabText:'', tabErgebnis:null, sicherung:null, bereichId:'' };
 
 function isbnListeLesen(text){
   return text.split(/[\s,;]+/).map(function (t) { return Buchdaten.normIsbn(t); })
@@ -4864,11 +5007,14 @@ function isbnListeUebernehmen(){
       var d = e.daten;
       var idx = S.titles.length + 1;
       var id = uid('t');
-      S.titles.push({ id:id, title:d.title||'Ohne Titel', subtitle:d.subtitle||'', author:d.author||'Unbekannt',
+      var ber = bestand.bereichId || '';
+      var t = { id:id, title:d.title||'Ohne Titel', subtitle:d.subtitle||'', author:d.author||'Unbekannt',
         illustrator:d.illustrator||'', publisher:d.publisher||'', year:+d.year||new Date().getFullYear(),
         ageMin:3, ageMax:6, cats:[], blurb:d.blurb||'', isbn:d.isbn||Buchdaten.formatIsbn(e.isbn),
-        lang:'Deutsch', coverIdx:(idx-1) % COVER_PALETTE.length, cover:null });
-      S.copies.push({ id:uid('c'), titleId:id, inv:'B-'+String(idx).padStart(3,'0')+'-1',
+        lang:'Deutsch', coverIdx:(idx-1) % COVER_PALETTE.length, cover:null,
+        bereichId:ber, nr:naechsteNummer(ber) };
+      S.titles.push(t);
+      S.copies.push({ id:uid('c'), titleId:id, inv:invNummer(t, 1),
         status:'available', token:newToken('B'), etikettAm:null });
       neuAngelegt++;
     } else if (e.art === 'dublette'){
@@ -4901,12 +5047,14 @@ function tabelleLesen(text){
 function tabelleUebernehmen(){
   var titelZahl = 0, exemplare = 0;
   bestand.tabErgebnis.neu.forEach(function (n){
-    var idx = S.titles.length + 1, id = uid('t');
-    S.titles.push({ id:id, title:n.titel, subtitle:'', author:n.autor, illustrator:'', publisher:'',
+    var idx = S.titles.length + 1, id = uid('t'), ber = bestand.bereichId || '';
+    var neuerTitel = { id:id, title:n.titel, subtitle:'', author:n.autor, illustrator:'', publisher:'',
       year:new Date().getFullYear(), ageMin:n.von, ageMax:n.bis, cats:n.themen.slice(), blurb:'',
-      isbn:'', lang:'Deutsch', coverIdx:(idx-1) % COVER_PALETTE.length, cover:null });
+      isbn:'', lang:'Deutsch', coverIdx:(idx-1) % COVER_PALETTE.length, cover:null,
+      bereichId:ber, nr:naechsteNummer(ber) };
+    S.titles.push(neuerTitel);
     for (var k = 0; k < n.exemplare; k++){
-      S.copies.push({ id:uid('c'), titleId:id, inv:'B-'+String(idx).padStart(3,'0')+'-'+(k+1),
+      S.copies.push({ id:uid('c'), titleId:id, inv:invNummer(neuerTitel, k+1),
         status:'available', token:newToken('B'), etikettAm:null });
       exemplare++;
     }
@@ -5207,7 +5355,7 @@ const SCREENS = {
   start:screenStart, library:screenLibrary, book:screenBook, scan:screenScan,
   children:screenChildren, child:screenChild, overdue:screenOverdue, more:screenMore,
   settings:screenSettings, groups:screenGroups, cards:screenCards, labels:screenLabels,
-  rollover:screenRollover, bestand:screenBestand, stats:screenStats, anleitung:screenAnleitung, kinderimport:screenKinderImport, kategorien:screenKategorien, log:screenLog, privacy:screenPrivacy
+  rollover:screenRollover, bestand:screenBestand, stats:screenStats, anleitung:screenAnleitung, kinderimport:screenKinderImport, kategorien:screenKategorien, bereiche:screenBereiche, log:screenLog, privacy:screenPrivacy
 };
 function withFocus(fn){
   const el = document.activeElement;
@@ -5392,13 +5540,16 @@ function saveBook(){
   if (!d.title || !d.title.trim()){ toast('Ein Titel wird gebraucht.'); return; }
   const id = uid('t');
   const idx = S.titles.length + 1;
-  S.titles.push({
+  const ber = d.bereichId || '';
+  const neu = {
     id, title:d.title.trim(), subtitle:d.subtitle||'', author:d.author||'Unbekannt', illustrator:d.illustrator||'',
     publisher:d.publisher||'', year:+d.year || new Date().getFullYear(), ageMin:+d.ageMin||3, ageMax:+d.ageMax||6,
     cats:d.cats.slice(), blurb:d.blurb||'', isbn:d.isbn||'', lang:d.lang||'Deutsch',
-    coverIdx:(idx-1) % COVER_PALETTE.length, cover: flow.foto || null
-  });
-  const c = { id:uid('c'), titleId:id, inv:'B-'+String(idx).padStart(3,'0')+'-1', status:'available', token:newToken('B'), etikettAm:null };
+    coverIdx:(idx-1) % COVER_PALETTE.length, cover: flow.foto || null,
+    bereichId:ber, nr:naechsteNummer(ber)
+  };
+  S.titles.push(neu);
+  const c = { id:uid('c'), titleId:id, inv:invNummer(neu, 1), status:'available', token:newToken('B'), etikettAm:null };
   S.copies.push(c);
   logAction('Neuer Titel "'+d.title.trim()+'" mit Exemplar '+c.inv+' angelegt');
   save();
@@ -5407,9 +5558,13 @@ function saveBook(){
 }
 function addCopyTo(titleId){
   const t = title(titleId);
-  const n = copiesOfTitle(titleId).length + 1;
-  const base = t.id.startsWith('t') && /^t\d+$/.test(t.id) ? t.id.slice(1) : String(S.titles.indexOf(t)+1);
-  const c = { id:uid('c'), titleId, inv:'B-'+String(base).padStart(3,'0')+'-'+n, status:'available', token:newToken('B'), etikettAm:null };
+  /* Die naechste freie Exemplarnummer, nicht einfach die Anzahl: sonst
+     entsteht nach einer Aussonderung eine Nummer, die es schon gibt. */
+  const vorhanden = copiesOfTitle(titleId).map(c => {
+    const m = /-(\d+)$/.exec(c.inv || ''); return m ? +m[1] : 0;
+  });
+  const n = Math.max(0, ...vorhanden) + 1;
+  const c = { id:uid('c'), titleId, inv:invNummer(t, n), status:'available', token:newToken('B'), etikettAm:null };
   S.copies.push(c);
   logAction('Weiteres Exemplar '+c.inv+' für "'+t.title+'" angelegt');
   save();
@@ -5658,6 +5813,72 @@ const ACTIONS = {
     druckEinstellungen().skala = 1; save(); render();
     toast('Maßstab auf 100 % zurückgesetzt.');
   },
+  'bereich-neu': () => askText({ title:'Bereich anlegen', label:'Name des Regalbereichs', ok:'Weiter' }, name => {
+    if (!name || !name.trim()){ toast('Der Bereich braucht einen Namen.'); return; }
+    const vorschlag = name.trim().toUpperCase().replace(/[^A-ZÄÖÜ]/g,'').slice(0,2);
+    askText({ title:'Kürzel für „'+name.trim()+'"', label:'Ein bis drei Zeichen – sie stehen auf jedem Etikett',
+      value:vorschlag, ok:'Anlegen' }, kuerzel => {
+      const fehler = bereichAnlegen(name, kuerzel);
+      if (fehler){ toast(fehler); return; }
+      render();
+      toast('Bereich angelegt – Nummern beginnen mit '+kuerzelPruefen(kuerzel).kuerzel+'.');
+    });
+  }),
+  'bereich-aendern': () => {
+    const b = bereich(ereignisId); if (!b) return;
+    askText({ title:'Bereich ändern', label:'Name', value:b.name, ok:'Weiter' }, name => {
+      const n = (name||'').trim();
+      if (!n){ toast('Der Bereich braucht einen Namen.'); return; }
+      askText({ title:'Kürzel für „'+n+'"', label:'Ein bis drei Zeichen', value:b.kuerzel, ok:'Speichern' }, kuerzel => {
+        const k = kuerzelPruefen(kuerzel, b.id);
+        if (k.fehler){ toast(k.fehler); return; }
+        const altesKuerzel = b.kuerzel;
+        b.name = n; b.kuerzel = k.kuerzel;
+        /* Aendert sich das Kuerzel, aendern sich alle Nummern dieses Bereichs -
+           und die geklebten Etiketten stimmen nicht mehr. Also neu drucken. */
+        let betroffen = 0;
+        if (altesKuerzel !== k.kuerzel){
+          S.titles.filter(t => t.bereichId === b.id).forEach(t => {
+            copiesOfTitle(t.id).forEach((c, i) => { c.inv = invNummer(t, i+1); c.etikettAm = null; betroffen++; });
+          });
+        }
+        logAction('Bereich "'+n+'" auf Kürzel '+k.kuerzel+' geändert');
+        save(); render();
+        toast(betroffen ? plural(betroffen,'Etikett','Etiketten')+' muss neu gedruckt werden.' : 'Bereich geändert.');
+      });
+    });
+  },
+  'bereich-weg': () => {
+    const b = bereich(ereignisId); if (!b) return;
+    const n = bereichBenutzt(b.id);
+    askConfirm({ title:'Bereich löschen',
+      body: n ? plural(n,'Buch','Bücher')+' steht in „'+b.name+'". Sie bleiben erhalten, verlieren aber ihren Bereich – '+
+              'ihre Nummern beginnen dann wieder mit B und die Etiketten müssen neu gedruckt werden.'
+            : 'Der Bereich ist leer und kann gefahrlos weg.',
+      ok:'Löschen', danger:true }, () => {
+      let betroffen = 0;
+      S.titles.filter(t => t.bereichId === b.id).forEach(t => { betroffen += titelUmnummerieren(t, ''); });
+      S.bereiche = bereiche().filter(x => x.id !== b.id);
+      logAction('Bereich "'+b.name+'" gelöscht');
+      save(); render();
+      toast(betroffen ? plural(betroffen,'Etikett','Etiketten')+' muss neu gedruckt werden.' : 'Bereich gelöscht.');
+    });
+  },
+  'buch-bereich': () => {
+    const t = title(ereignisId); if (!t) return;
+    const optionen = bereiche().map(b => ({ id:b.id, label:b.kuerzel+' · '+b.name,
+      beschreibung: t.bereichId === b.id ? 'steht hier' : 'Nummer wird '+b.kuerzel+'-'+
+        String(naechsteNummer(b.id)).padStart(3,'0')+'-1', stil: t.bereichId === b.id ? 'available' : 'out' }));
+    optionen.push({ id:'', label:'Ohne Bereich', beschreibung:'Nummer beginnt mit B', stil:'out' });
+    askAuswahl({ title:'Wohin gehört „'+t.title+'"?', optionen }, wahl => {
+      const gewaehlt = wahl === '' ? '' : wahl;
+      if ((t.bereichId||'') === gewaehlt){ toast('Steht dort schon.'); return; }
+      const n = titelUmnummerieren(t, gewaehlt);
+      logAction('"'+t.title+'" nach '+bereichName(gewaehlt)+' umgeräumt');
+      save(); render();
+      toast(plural(n,'Exemplar','Exemplare')+' neu nummeriert – Etikett neu drucken.');
+    });
+  },
   'kategorie-neu': () => askText({ title:'Kategorie anlegen', label:'Name des Schlagworts', ok:'Anlegen' }, name => {
     const fehler = kategorieHinzufuegen(name);
     if (fehler){ toast(fehler); return; }
@@ -5685,6 +5906,7 @@ const ACTIONS = {
 };
 
 var ereignisArt = 'etikett';
+var ereignisId = null;
 var bogenModus = 'belegt';
 document.addEventListener('click', ev => {
   const el = ev.target.closest('[data-act],[data-nav],[data-go],[data-title],[data-child],[data-cat],[data-group],'+
@@ -5695,10 +5917,17 @@ document.addEventListener('click', ev => {
     '[data-karte],[data-kartenfeld],[data-zeichen-aendern],[data-zeichen-waehlen],[data-etikett-filter],'+
     '[data-gruppenkonto],[data-gruppenkonto-weg],[data-import-ziel],[data-kat-umbenennen],[data-kat-loeschen],'+
     '[data-bogen-feld],[data-bogen-art],[data-bogen-modus],[data-bogen-spalte],[data-bogen-zeile],'+
-    '[data-format-modus],[data-format-katalog]');
+    '[data-format-modus],[data-format-katalog],[data-bereich-filter],[data-import-bereich]');
   if (!el) return;
   const d = el.dataset;
   if (d.bogenArt) ereignisArt = d.bogenArt;
+  if (d.id) ereignisId = d.id;
+  if (d.bereichFilter !== undefined && el.hasAttribute('data-bereich-filter')){
+    lib.bereich = d.bereichFilter; render(); return;
+  }
+  if (d.importBereich !== undefined && el.hasAttribute('data-import-bereich')){
+    bestand.bereichId = d.importBereich; render(); return;
+  }
 
   if (d.formatModus){ formatFlow.modus = d.formatModus; formatFlow.fehler = null; rerenderSheet(); return; }
   if (d.formatKatalog !== undefined && el.hasAttribute('data-format-katalog')){
