@@ -224,6 +224,24 @@ select.pill{
 .cover .c-flag.none{background:var(--rose-soft); color:var(--rose-ink)}
 .book-card .b-title{font-weight:700; font-size:15px; line-height:1.35}
 .book-card .b-meta{color:var(--ink-2); font-size:13.5px}
+/* Stoebern: ein Buch je Seite, seitlich wischen - der Browser rastet ein */
+.stoebern{display:flex; gap:16px; overflow-x:auto; scroll-snap-type:x mandatory; overscroll-behavior-x:contain;
+  -webkit-overflow-scrolling:touch; scrollbar-width:none; padding-bottom:4px}
+.stoebern::-webkit-scrollbar{display:none}
+.st-karte{flex:0 0 100%; scroll-snap-align:center; scroll-snap-stop:always; display:flex; flex-direction:column;
+  align-items:center; gap:14px; text-align:center; padding:6px 4px 10px}
+.st-karte .st-cover{width:min(230px, 52vw)}
+.st-karte .st-cover .c-title{font-size:20px}
+.st-karte .st-cover .c-author{font-size:14px}
+.st-karte .st-titel{font-family:var(--display); font-weight:700; font-size:22px; line-height:1.25}
+.st-karte .st-meta{color:var(--ink-2); font-size:15px}
+.st-karte .toggle-row{justify-content:center}
+.st-karte .st-text{color:var(--ink-2); max-width:520px; display:-webkit-box; -webkit-line-clamp:4; -webkit-box-orient:vertical; overflow:hidden}
+.ansicht-wahl{display:flex; flex-wrap:wrap; gap:8px; align-items:center}
+.ansicht-wahl .toggle{display:inline-flex; align-items:center; gap:7px}
+.ansicht-wahl .toggle svg{width:18px; height:18px; flex:none}
+.stoebern-nav{display:flex; align-items:center; justify-content:center; gap:18px}
+.stoebern-nav .st-zahl{font-weight:700; min-width:76px; text-align:center; font-variant-numeric:tabular-nums}
 
 /* ---------- Listen ---------- */
 .list{display:flex; flex-direction:column; border:1px solid var(--line); border-radius:var(--r-m); background:var(--card); overflow:hidden; box-shadow:var(--shadow)}
@@ -2794,7 +2812,7 @@ function screenStart(){
 }
 
 /* ---------------------------------------------------------- Bibliothek */
-let lib = { q:'', avail:false, age:'', cat:'', only:null };
+let lib = { q:'', avail:false, age:'', cat:'', bereich:'', only:null, ansicht:'raster', stTitel:null };
 function screenLibrary(){
   let list = S.titles.slice();
   if (lib.only === 'damaged') list = list.filter(t => copiesOfTitle(t.id).some(c => c.status==='damaged'));
@@ -2805,12 +2823,24 @@ function screenLibrary(){
   if (lib.avail) list = list.filter(t => availableCopies(t.id).length > 0);
   if (lib.age)  { const a = +lib.age; list = list.filter(t => a >= t.ageMin && a <= t.ageMax); }
   if (lib.cat)  list = list.filter(t => t.cats.includes(lib.cat));
+  if (lib.bereich) list = list.filter(t => (t.bereichId||'') === (lib.bereich === 'ohne' ? '' : lib.bereich));
+
+  const karten = lib.ansicht === 'stoebern' ? stoebernKarten(list) : '<div class="grid-books">'+list.map(t => {
+        const av = availableCopies(t.id).length, total = copiesOfTitle(t.id).length;
+        const flag = '<span class="c-flag'+(av?'':' none')+'">'+(av? av+'/'+total+' frei' : 'alle aus')+'</span>';
+        return '<button class="book-card" data-title="'+t.id+'">'+coverArt(t, flag)+
+          '<span class="b-title">'+esc(t.title)+'</span>'+
+          '<span class="b-meta">'+esc(t.author)+' · '+t.ageMin+'–'+t.ageMax+' J.</span></button>';
+      }).join('')+'</div>';
 
   return '<div class="stack">'+
     '<div class="head-row"><div><h1 class="screen-title">Bibliothek</h1>'+
       '<p class="screen-sub">'+plural(S.titles.length,'Titel','Titel')+' · '+plural(S.copies.length,'Exemplar','Exemplare')+' · '+
       S.copies.filter(c=>c.status==='available').length+' verfügbar</p></div>'+
-      '<button class="btn btn-sm" data-act="start-add">'+icon('plus')+'Buch hinzufügen</button></div>'+
+      '<div class="ansicht-wahl" role="group" aria-label="Ansicht">'+
+        '<button class="toggle" data-act="ansicht-raster" aria-pressed="'+(lib.ansicht==='stoebern'?'false':'true')+'">'+icon('library')+'Raster</button>'+
+        '<button class="toggle" data-act="ansicht-stoebern" aria-pressed="'+(lib.ansicht==='stoebern'?'true':'false')+'">'+icon('book')+'Stöbern</button>'+
+        '<button class="btn btn-sm" data-act="start-add">'+icon('plus')+'Buch hinzufügen</button></div></div>'+
     '<div class="filters">'+
       '<label class="search">'+icon('search')+'<input id="libSearch" placeholder="Titel, Autor/in, Schlagwort oder ISBN" value="'+esc(lib.q)+'" autocomplete="off"></label>'+
       '<select class="pill" id="libAge"><option value="">Alle Altersstufen</option>'+
@@ -2819,17 +2849,66 @@ function screenLibrary(){
     '</div>'+
     '<div class="toggle-row"><button class="toggle" data-cat="" aria-pressed="'+(lib.cat?'false':'true')+'">Alle Themen</button>'+
       kategorien().map(c=>'<button class="toggle" data-cat="'+esc(c)+'" aria-pressed="'+(lib.cat===c?'true':'false')+'">'+esc(c)+'</button>').join('')+'</div>'+
-    (list.length ? '<div class="grid-books">'+list.map(t => {
-        const av = availableCopies(t.id).length, total = copiesOfTitle(t.id).length;
-        const flag = '<span class="c-flag'+(av?'':' none')+'">'+(av? av+'/'+total+' frei' : 'alle aus')+'</span>';
-        return '<button class="book-card" data-title="'+t.id+'">'+coverArt(t, flag)+
-          '<span class="b-title">'+esc(t.title)+'</span>'+
-          '<span class="b-meta">'+esc(t.author)+' · '+t.ageMin+'–'+t.ageMax+' J.</span></button>';
-      }).join('')+'</div>'
+    (bereiche().length ? '<div class="toggle-row"><button class="toggle" data-bereich-filter="" aria-pressed="'+(lib.bereich?'false':'true')+'">Alle Regale</button>'+
+      bereiche().map(b=>'<button class="toggle" data-bereich-filter="'+b.id+'" aria-pressed="'+(lib.bereich===b.id?'true':'false')+'">'+esc(b.kuerzel)+' · '+esc(b.name)+'</button>').join('')+
+      (S.titles.some(t => !t.bereichId) ? '<button class="toggle" data-bereich-filter="ohne" aria-pressed="'+(lib.bereich==='ohne'?'true':'false')+'">Ohne Bereich</button>' : '')+
+      '</div>' : '')+
+    (list.length ? karten
       : '<div class="card"><div class="empty">'+icon('search')+
         '<span class="e-title">Nichts gefunden</span><span>Andere Schreibweise probieren oder Filter zurücksetzen.</span>'+
         '<button class="btn btn-sm" data-act="clear-filters">Filter zurücksetzen</button></div></div>')+
   '</div>';
+}
+
+/* Stoebern: ein Buch je Seite. Gemerkt wird das Buch, nicht die Stelle - so
+   landet man nach dem Oeffnen und Zurueck wieder beim selben Buch, und ein
+   Filter, der es ausblendet, faengt einfach vorne an. */
+function stoebernKarten(list){
+  return '<div class="stoebern-nav">'+
+      '<button class="icon-btn" data-act="stoebern-zurueck" aria-label="Voriges Buch">'+icon('back')+'</button>'+
+      '<span class="st-zahl" id="stoebernZahl">1 / '+list.length+'</span>'+
+      '<button class="icon-btn" data-act="stoebern-weiter" aria-label="Nächstes Buch">'+icon('next')+'</button>'+
+    '</div>'+
+    '<div class="stoebern" id="stoebern" aria-label="Bücher durchblättern">'+list.map(t => {
+      const av = availableCopies(t.id).length, total = copiesOfTitle(t.id).length;
+      return '<div class="st-karte" data-st="'+t.id+'">'+
+        '<button class="st-cover" data-title="'+t.id+'" aria-label="'+esc(t.title)+' öffnen">'+coverArt(t)+'</button>'+
+        '<div><div class="st-titel">'+esc(t.title)+'</div>'+
+        '<div class="st-meta">'+esc(t.author)+(t.illustrator && t.illustrator!==t.author ? ' · Illustration: '+esc(t.illustrator) : '')+'</div></div>'+
+        '<div class="toggle-row">'+
+          '<span class="chip '+(av?'ok':'loaned')+'">'+(av ? av+' von '+total+' frei' : 'alle ausgeliehen')+'</span>'+
+          '<span class="chip">'+icon('users')+t.ageMin+'–'+t.ageMax+' J.</span>'+
+          '<span class="chip">'+esc(invPraefix(t.bereichId))+' · '+esc(bereichName(t.bereichId))+'</span>'+
+          t.cats.map(c => '<span class="chip">'+esc(c)+'</span>').join('')+'</div>'+
+        (t.blurb ? '<p class="st-text">'+esc(t.blurb)+'</p>' : '')+
+        '<button class="btn btn-sm" data-title="'+t.id+'">Zum Buch</button>'+
+      '</div>';
+    }).join('')+'</div>';
+}
+function stoebernStelle(el){ return el.clientWidth ? Math.round(el.scrollLeft / (el.clientWidth + 16)) : 0; }
+function stoebernZeigen(el){
+  const karten = el.querySelectorAll('.st-karte');
+  const i = Math.min(stoebernStelle(el), karten.length-1);
+  const zahl = document.getElementById('stoebernZahl');
+  if (zahl) zahl.textContent = (i+1)+' / '+karten.length;
+  if (karten[i]) lib.stTitel = karten[i].dataset.st;
+}
+function stoebernAnbinden(){
+  const el = document.getElementById('stoebern');
+  if (!el) return;
+  const karten = Array.prototype.slice.call(el.querySelectorAll('.st-karte'));
+  const i = karten.findIndex(k => k.dataset.st === lib.stTitel);
+  if (i > 0) el.scrollLeft = i * (el.clientWidth + 16);
+  stoebernZeigen(el);
+  let warten = null;
+  el.addEventListener('scroll', () => { clearTimeout(warten); warten = setTimeout(() => stoebernZeigen(el), 80); }, { passive:true });
+}
+function stoebernBlaettern(richtung){
+  const el = document.getElementById('stoebern');
+  if (!el) return;
+  const n = el.querySelectorAll('.st-karte').length;
+  const ziel = Math.max(0, Math.min(n-1, stoebernStelle(el) + richtung));
+  el.scrollTo({ left: ziel * (el.clientWidth + 16), behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
 }
 
 function screenBook(){
@@ -5479,6 +5558,7 @@ function withFocus(fn){
 function render(){
   withFocus(() => {
     $('#view').innerHTML = (SCREENS[route.name] || screenStart)();
+    stoebernAnbinden();
     renderNav();
     $('#orgName').textContent = S.org.name;
     $('#todayLabel').textContent = fmtDate(todayISO());
@@ -5744,7 +5824,11 @@ const ACTIONS = {
   'etikett-spaeter': () => { closeSheet(); go('labels'); },
   'add-restart': () => { flow = { type:'add', step:'choose', draft:null, source:null, dupTitleId:null }; rerenderSheet(); },
   'toggle-avail': () => { lib.avail = !lib.avail; render(); },
-  'clear-filters': () => { lib = { q:'', avail:false, age:'', cat:'', only:null }; render(); },
+  'clear-filters': () => { lib = { q:'', avail:false, age:'', cat:'', bereich:'', only:null, ansicht:lib.ansicht, stTitel:null }; render(); },
+  'ansicht-raster':  () => { lib.ansicht = 'raster'; render(); },
+  'ansicht-stoebern':() => { lib.ansicht = 'stoebern'; render(); },
+  'stoebern-zurueck':() => stoebernBlaettern(-1),
+  'stoebern-weiter': () => stoebernBlaettern(1),
 
   'add-group': () => askText({ title:'Gruppe anlegen', label:'Name der Gruppe', ok:'Anlegen' }, name => {
     S.groups.push({ id:uid('g'), name });
