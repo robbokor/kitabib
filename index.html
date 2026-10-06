@@ -2583,9 +2583,13 @@ function startAddBook(){
   flow = { type:'add', step:'choose', draft:null, source:null, dupTitleId:null };
   openSheet({ title:'Buch hinzufügen', body:addBody, foot:addFoot });
 }
+/* Wer erfasst, erfasst meist einen Stapel aus demselben Fach - der zuletzt
+   gewaehlte Bereich ist deshalb die Vorgabe fuer das naechste Buch. */
+let letzterBereich = '';
+function entwurfBereich(){ return bereich(letzterBereich) ? letzterBereich : ''; }
 function emptyDraft(){
   return { title:'', author:'', illustrator:'', publisher:'', year:new Date().getFullYear(),
-           isbn:'', ageMin:3, ageMax:6, cats:[], blurb:'', conf:null };
+           isbn:'', ageMin:3, ageMax:6, cats:[], blurb:'', conf:null, bereichId:entwurfBereich() };
 }
 function addBody(){
   if (flow.step === 'choose'){
@@ -2663,7 +2667,13 @@ function addBody(){
         '<textarea id="f_blurb" data-draft="blurb" style="min-height:70px">'+esc(d.blurb)+'</textarea></div>'+
       '<div class="field"><label>Pädagogische Schlagwörter</label><div class="toggle-row">'+
         kategorien().map(c => '<button class="toggle" data-draft-cat="'+esc(c)+'" aria-pressed="'+(d.cats.includes(c)?'true':'false')+'">'+esc(c)+'</button>').join('')+
-      '</div></div>';
+      '</div></div>'+
+      '<div class="field"><label>Bereich im Regal</label><div class="toggle-row">'+
+        bereiche().map(b => '<button class="toggle" data-draft-bereich="'+b.id+'" aria-pressed="'+
+          (d.bereichId===b.id?'true':'false')+'">'+esc(b.kuerzel)+' · '+esc(b.name)+'</button>').join('')+
+        '<button class="toggle" data-draft-bereich="" aria-pressed="'+(d.bereichId?'false':'true')+'">Ohne Bereich</button>'+
+      '</div><p class="hint">Nummer wird <b>'+esc(invPraefix(d.bereichId))+'-'+
+        String(naechsteNummer(d.bereichId||'')).padStart(3,'0')+'-1</b></p></div>';
   }
   if (flow.step === 'done'){
     const t = title(flow.newTitleId), c = copy(flow.newCopyId);
@@ -5379,7 +5389,15 @@ function render(){
     $('#todayLabel').textContent = fmtDate(todayISO());
   });
 }
-function rerenderSheet(){ withFocus(renderSheet); }
+/* Ein Antippen im Formular (Schlagwort, Bereich) baut das Sheet neu auf -
+   die Position bleibt, solange der Schritt derselbe ist. */
+function rerenderSheet(){
+  const body = document.querySelector('#sheetHost .sheet-body');
+  const pos = body ? body.scrollTop : 0, schritt = flow && flow.step;
+  withFocus(renderSheet);
+  const neu = document.querySelector('#sheetHost .sheet-body');
+  if (neu && pos && schritt === (flow && flow.step)) neu.scrollTop = pos;
+}
 
 let toastTimer = null;
 function toast(msg){
@@ -5541,7 +5559,8 @@ function saveBook(){
   if (!d.title || !d.title.trim()){ toast('Ein Titel wird gebraucht.'); return; }
   const id = uid('t');
   const idx = S.titles.length + 1;
-  const ber = d.bereichId || '';
+  const ber = bereich(d.bereichId) ? d.bereichId : '';
+  letzterBereich = ber;
   const neu = {
     id, title:d.title.trim(), subtitle:d.subtitle||'', author:d.author||'Unbekannt', illustrator:d.illustrator||'',
     publisher:d.publisher||'', year:+d.year || new Date().getFullYear(), ageMin:+d.ageMin||3, ageMax:+d.ageMax||6,
@@ -5918,7 +5937,7 @@ document.addEventListener('click', ev => {
     '[data-karte],[data-kartenfeld],[data-zeichen-aendern],[data-zeichen-waehlen],[data-etikett-filter],'+
     '[data-gruppenkonto],[data-gruppenkonto-weg],[data-import-ziel],[data-kat-umbenennen],[data-kat-loeschen],'+
     '[data-bogen-feld],[data-bogen-art],[data-bogen-modus],[data-bogen-spalte],[data-bogen-zeile],'+
-    '[data-format-modus],[data-format-katalog],[data-bereich-filter],[data-import-bereich]');
+    '[data-format-modus],[data-format-katalog],[data-bereich-filter],[data-import-bereich],[data-draft-bereich]');
   if (!el) return;
   const d = el.dataset;
   if (d.bogenArt) ereignisArt = d.bogenArt;
@@ -5928,6 +5947,10 @@ document.addEventListener('click', ev => {
   }
   if (d.importBereich !== undefined && el.hasAttribute('data-import-bereich')){
     bestand.bereichId = d.importBereich; render(); return;
+  }
+  if (d.draftBereich !== undefined && el.hasAttribute('data-draft-bereich')){
+    if (!flow || !flow.draft) return;
+    flow.draft.bereichId = d.draftBereich; rerenderSheet(); return;
   }
 
   if (d.formatModus){ formatFlow.modus = d.formatModus; formatFlow.fehler = null; rerenderSheet(); return; }
@@ -6089,7 +6112,7 @@ document.addEventListener('click', ev => {
       const exists = S.titles.find(t => t.isbn === b.isbn || t.title.toLowerCase() === b.title.toLowerCase());
       if (exists){ flow.dupTitleId = exists.id; flow.step='duplicate'; }
       else {
-        flow.draft = Object.assign({}, b, { cats:b.cats.slice(), lang:'Deutsch', subtitle:'', quelle:'demo' });
+        flow.draft = Object.assign({}, b, { cats:b.cats.slice(), lang:'Deutsch', subtitle:'', quelle:'demo', bereichId:entwurfBereich() });
         flow.step = 'proposal';
       }
     }
