@@ -2615,8 +2615,9 @@ function addBody(){
       demoScanStrip('Beispielbuch zum Erfassen antippen:',
         LOOKUP.map((b,i) => '<button class="scan-chip" data-lookup="'+i+'">'+icon('scan')+
           '<span>'+esc(b.title.length>24?b.title.slice(0,22)+'…':b.title)+'<span class="sc-sub">neu</span></span></button>').join('')+
-        '<button class="scan-chip" data-lookup="dup">'+icon('book')+'<span>'+esc(bekannt.title)+
-        '<span class="sc-sub">bereits im Bestand</span></span></button>');
+        /* Bei leerem Bestand gibt es keine Dublette zum Vorfuehren */
+        (bekannt ? '<button class="scan-chip" data-lookup="dup">'+icon('book')+'<span>'+esc(bekannt.title)+
+        '<span class="sc-sub">bereits im Bestand</span></span></button>' : ''));
   }
   if (flow.step === 'foto'){
     return (flow.msg ? flashMsg(flow.msg.kind, flow.msg.text) : '')+
@@ -6082,7 +6083,7 @@ document.addEventListener('click', ev => {
   if (d.unpick){ flow.copyIds = flow.copyIds.filter(x => x !== d.unpick); flow.msg=null; rerenderSheet(); return; }
   if (d.scanReturn){ scanCopyForReturn(d.scanReturn); return; }
   if (d.lookup !== undefined){
-    if (d.lookup === 'dup'){ flow.dupTitleId = S.titles[0].id; flow.step='duplicate'; }
+    if (d.lookup === 'dup'){ if (!S.titles.length) return; flow.dupTitleId = S.titles[0].id; flow.step='duplicate'; }
     else {
       const b = LOOKUP[+d.lookup];
       const exists = S.titles.find(t => t.isbn === b.isbn || t.title.toLowerCase() === b.title.toLowerCase());
