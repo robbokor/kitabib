@@ -2857,6 +2857,14 @@ function screenBook(){
           (t.bereichId ? '' : ' – die Nummer beginnt mit B')+'</span>'+
         '<button class="btn btn-sm" data-act="buch-bereich" data-id="'+t.id+'">Bereich wählen</button>'+
       '</div></div>'+
+    /* Schlagwoerter lassen sich hier nachtragen - auch eines, das es in der
+       Liste nicht mehr gibt, bleibt sichtbar und laesst sich abwaehlen. */
+    '<div class="section"><span class="eyebrow">Pädagogische Schlagwörter</span>'+
+      '<div class="card pad"><div class="toggle-row">'+
+        kategorien().concat(t.cats.filter(c => !kategorien().includes(c))).map(c =>
+          '<button class="toggle" data-buch-cat="'+esc(c)+'" data-id="'+t.id+'" aria-pressed="'+
+          (t.cats.includes(c)?'true':'false')+'">'+esc(c)+'</button>').join('')+
+      '</div><p class="hint" style="margin-top:10px">Antippen zum An- und Abwählen – wird sofort gespeichert.</p></div></div>'+
     '<div class="section"><span class="eyebrow">Exemplare ('+cs.length+')</span>'+
       '<div class="list">'+cs.map(c => {
         const l = loanOfCopy(c.id), over = l && isOverdue(l);
@@ -5937,7 +5945,7 @@ document.addEventListener('click', ev => {
     '[data-karte],[data-kartenfeld],[data-zeichen-aendern],[data-zeichen-waehlen],[data-etikett-filter],'+
     '[data-gruppenkonto],[data-gruppenkonto-weg],[data-import-ziel],[data-kat-umbenennen],[data-kat-loeschen],'+
     '[data-bogen-feld],[data-bogen-art],[data-bogen-modus],[data-bogen-spalte],[data-bogen-zeile],'+
-    '[data-format-modus],[data-format-katalog],[data-bereich-filter],[data-import-bereich],[data-draft-bereich]');
+    '[data-format-modus],[data-format-katalog],[data-bereich-filter],[data-import-bereich],[data-draft-bereich],[data-buch-cat]');
   if (!el) return;
   const d = el.dataset;
   if (d.bogenArt) ereignisArt = d.bogenArt;
@@ -5947,6 +5955,12 @@ document.addEventListener('click', ev => {
   }
   if (d.importBereich !== undefined && el.hasAttribute('data-import-bereich')){
     bestand.bereichId = d.importBereich; render(); return;
+  }
+  if (d.buchCat){
+    const t = title(d.id); if (!t) return;
+    const i = t.cats.indexOf(d.buchCat);
+    if (i >= 0) t.cats.splice(i,1); else t.cats.push(d.buchCat);
+    save(); render(); return;
   }
   if (d.draftBereich !== undefined && el.hasAttribute('data-draft-bereich')){
     if (!flow || !flow.draft) return;
