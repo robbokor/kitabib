@@ -3623,23 +3623,40 @@ function screenBestand(){
   let tabBlock;
   if (bestand.tabErgebnis){
     const t = bestand.tabErgebnis;
+    const unbekannteBereiche = t.neu.map(n => n.unbekannterBereich).filter((b,i,a) => b && a.indexOf(b) === i);
     tabBlock = '<div class="stack">'+
       (t.fehler.length ? '<div class="notice todo">'+icon('alert')+'<span><span class="n-title">'+plural(t.fehler.length,'Zeile','Zeilen')+' übersprungen</span>'+
         '<span class="n-body">'+esc(t.fehler.map(f=>f.grund).join(' · '))+'</span></span></div>' : '')+
-      '<div class="list">'+t.neu.map(n => '<div class="row"><span class="stripe available"></span>'+
+      (t.spalten ? '<p class="hint">Erkannte Spalten: <b>'+esc(t.spalten.map(tabSpaltenName).join(', '))+'</b>'+
+        (t.ignoriert.length ? ' · nicht übernommen: '+esc(t.ignoriert.join(', ')) : '')+'</p>' : '')+
+      (unbekannteBereiche.length ? '<div class="notice todo">'+icon('alert')+'<span><span class="n-title">Unbekannter Bereich: '+
+        esc(unbekannteBereiche.join(', '))+'</span><span class="n-body">Diese Bücher kommen in den Bereich des Durchgangs ('+
+        esc(bereichName(bestand.bereichId))+'). Wer den Bereich vorher unter Mehr → Bereiche im Regal anlegt und neu prüft, '+
+        'bekommt ihn zugeordnet.</span></span></div>' : '')+
+      '<div class="list">'+t.neu.map(n => '<div class="row"><span class="stripe '+(n.vorhandenId||n.doppeltInListe?'loaned':'available')+'"></span>'+
         '<span class="r-main"><span class="r-title">'+esc(n.titel)+'</span>'+
-        '<span class="r-sub">'+esc(n.autor)+' · '+n.von+'–'+n.bis+' J. · '+plural(n.exemplare,'Exemplar','Exemplare')+
-        (n.themen.length ? ' · '+esc(n.themen.join(', ')) : '')+
+        '<span class="r-sub">'+esc([n.autor, n.verlag, n.jahr, n.isbn && 'ISBN '+n.isbn].filter(Boolean).join(' · '))+'</span>'+
+        '<span class="r-sub">'+(n.vorhandenId ? 'schon im Bestand – '+plural(n.exemplare,'weiteres Exemplar','weitere Exemplare')
+          : n.doppeltInListe ? 'gleiche ISBN wie weiter oben – '+plural(n.exemplare,'weiteres Exemplar','weitere Exemplare')
+          : esc(invPraefix(tabZielBereich(n)))+' · '+esc(bereichName(tabZielBereich(n)))+' · '+n.von+'–'+n.bis+' J. · '+
+            plural(n.exemplare,'Exemplar','Exemplare')+
+            (n.themen.length ? ' · '+esc(n.themen.join(', ')) : ''))+
         (n.unbekannteThemen.length ? ' · unbekanntes Thema: '+esc(n.unbekannteThemen.join(', ')) : '')+
         '</span></span></div>').join('')+'</div>'+
       '<div class="btn-row"><button class="btn" data-act="tab-verwerfen">Verwerfen</button>'+
       '<button class="btn btn-primary" style="flex:1" data-act="tab-uebernehmen"'+(t.neu.length?'':' disabled')+'>'+
-      icon('check')+plural(t.neu.length,'Titel','Titel')+' anlegen</button></div></div>';
+      icon('check')+plural(t.neu.length,'Zeile','Zeilen')+' übernehmen</button></div></div>';
   } else {
     tabBlock = '<div class="stack">'+
-      '<div class="field"><label for="tabListe">Titel;Autor/in;Alter von;Alter bis;Themen;Exemplare</label>'+
-        '<textarea id="tabListe" data-bestand="tabText" spellcheck="false" placeholder="Unser Kita-Liederbuch;Team Sonnenblume;3;6;Sprache;2">'+esc(bestand.tabText)+'</textarea>'+
-        '<p class="hint">Für Bücher ohne ISBN. Erlaubte Themen: '+esc(kategorien().join(', '))+'.</p></div>'+
+      '<div class="field"><label for="tabListe">Liste mit Kopfzeile – etwa aus Excel kopiert</label>'+
+        '<textarea id="tabListe" data-bestand="tabText" spellcheck="false" placeholder="Titel;Autor;Bereich;Themen;Alter von;Alter bis;ISBN;Exemplare&#10;Unser Kita-Liederbuch;Team Sonnenblume;BB;Sprache;3;6;;2">'+esc(bestand.tabText)+'</textarea>'+
+        '<p class="hint">Die erste Zeile nennt die Spalten, die Reihenfolge ist egal. Verstanden werden: '+
+        '<b>Titel</b>, Untertitel, Autor, Illustrator, Verlag, Jahr, ISBN, Alter von, Alter bis (oder Alter „3–6“), '+
+        'Themen, <b>Bereich</b> (Name oder Kürzel, auch „Regalfach“), Exemplare, Beschreibung, Sprache. '+
+        'Spalten aus Excel einfach markieren und hier einfügen.</p>'+
+        '<p class="hint">Themen mit Komma trennen. Erlaubt: '+esc(kategorien().join(', '))+'. '+
+        'Bereiche: '+esc(bereiche().map(b => b.kuerzel+' = '+b.name).join(', ') || 'noch keine angelegt')+'. '+
+        'Ist eine ISBN schon im Bestand, kommt ein weiteres Exemplar dazu statt eines doppelten Titels.</p></div>'+
       '<button class="btn" data-act="tab-pruefen">'+icon('eye')+'Nur prüfen</button></div>';
   }
 
@@ -3659,7 +3676,7 @@ function screenBestand(){
           String(naechsteNummer(bestand.bereichId)).padStart(3,'0')+'-1</b></p>'+
       '</div></div>' : '')+
     '<div class="section"><span class="eyebrow">1 · Bücher mit ISBN</span>'+isbnBlock+'</div>'+
-    '<div class="section"><span class="eyebrow">2 · Bücher ohne ISBN</span>'+tabBlock+'</div>'+
+    '<div class="section"><span class="eyebrow">2 · Vorhandene Liste übernehmen</span>'+tabBlock+'</div>'+
     '<div class="section"><span class="eyebrow">3 · Sicherung</span>'+
       '<div class="card pad stack">'+
         '<p class="hint">Alles, was in diesem Browser liegt, als Textdatei sichern – und auf einem anderen Gerät wieder einlesen.</p>'+
@@ -5047,31 +5064,101 @@ function isbnListeUebernehmen(){
   toast(neuAngelegt+' Titel angelegt · '+zusatz+' Exemplare ergänzt. Etiketten nicht vergessen.');
 }
 
-/* Tabelle fuer Buecher ohne ISBN: Titel;Autor;Alter von;Alter bis;Themen;Exemplare */
+/* Tabelle fuer die Uebernahme einer bestehenden Liste. Ohne Kopfzeile gilt die
+   alte feste Reihenfolge Titel;Autor;Alter von;Alter bis;Themen;Exemplare.
+   Mit Kopfzeile zaehlen die Spaltennamen, nicht die Reihenfolge - so laesst
+   sich eine vorhandene Excel-Liste mit Regalfach, ISBN, Verlag usw. einfach
+   hineinkopieren (Excel trennt beim Kopieren mit Tabulator). */
+var TAB_SPALTEN = {
+  titel:['titel','buchtitel','title'], untertitel:['untertitel','reihe','untertitel / reihe'],
+  autor:['autor','autorin','autor/in','autor/-in','verfasser','verfasser/in','author'],
+  illustrator:['illustrator','illustratorin','illustrator/in','illustration'],
+  verlag:['verlag','publisher'], jahr:['jahr','erscheinungsjahr'], isbn:['isbn','ean'],
+  von:['alter von','ab','ab alter','alter ab'], bis:['alter bis','bis','bis alter'], alter:['alter'],
+  themen:['themen','thema','schlagwörter','schlagworte','schlagwort','kategorie','kategorien'],
+  bereich:['bereich','regal','regalfach','fach','standort','kürzel'],
+  exemplare:['exemplare','anzahl','stück','stueck','menge'],
+  blurb:['beschreibung','kurzbeschreibung','inhalt'], sprache:['sprache']
+};
+var TAB_SPALTEN_NAME = { titel:'Titel', untertitel:'Untertitel', autor:'Autor', illustrator:'Illustrator', verlag:'Verlag',
+  jahr:'Jahr', isbn:'ISBN', von:'Alter von', bis:'Alter bis', alter:'Alter', themen:'Themen', bereich:'Bereich',
+  exemplare:'Exemplare', blurb:'Beschreibung', sprache:'Sprache' };
+function tabSpaltenName(k){ return TAB_SPALTEN_NAME[k] || k; }
+function tabSpalte(kopf){
+  var k = kopf.trim().toLowerCase().replace(/\s+/g,' ');
+  for (var name in TAB_SPALTEN) if (TAB_SPALTEN[name].indexOf(k) >= 0) return name;
+  return null;
+}
+function tabBereich(roh){
+  var r = (roh||'').trim().toLowerCase();
+  if (!r) return null;
+  return bereiche().filter(function (b){ return b.kuerzel.toLowerCase() === r || b.name.toLowerCase() === r; })[0] || false;
+}
 function tabelleLesen(text){
-  var out = { neu:[], fehler:[] };
-  text.split(/\r?\n/).map(function (z){ return z.trim(); }).filter(Boolean).forEach(function (zeile, i){
-    if (i === 0 && /titel/i.test(zeile)) return;
-    var p = zeile.split(';').map(function (t){ return t.trim(); });
-    if (!p[0]){ out.fehler.push({ zeile: zeile, grund:'Titel fehlt' }); return; }
-    var themen = (p[4]||'').split(/[,\/]/).map(function (t){ return t.trim(); })
-                  .filter(function (t){ return kategorien().indexOf(t) >= 0; });
-    var unbekannt = (p[4]||'').split(/[,\/]/).map(function (t){ return t.trim(); })
-                  .filter(function (t){ return t && kategorien().indexOf(t) < 0; });
-    out.neu.push({ titel:p[0], autor:p[1]||'Unbekannt', von:parseInt(p[2],10)||3, bis:parseInt(p[3],10)||6,
-                   themen:themen, unbekannteThemen:unbekannt, exemplare:Math.max(1, parseInt(p[5],10)||1) });
+  var out = { neu:[], fehler:[], spalten:null, ignoriert:[] };
+  var zeilen = text.split(/\r?\n/).filter(function (z){ return z.trim(); });
+  if (!zeilen.length) return out;
+  var trenner = zeilen[0].indexOf('\t') >= 0 ? '\t' : ';';
+  var kopf = null;
+  if (/titel/i.test(zeilen[0])){
+    var namen = zeilen.shift().split(trenner);
+    kopf = namen.map(tabSpalte);
+    if (kopf.indexOf('titel') >= 0){
+      out.spalten = kopf.filter(Boolean);
+      out.ignoriert = namen.filter(function (n, i){ return n.trim() && !kopf[i]; }).map(function (n){ return n.trim(); });
+    } else kopf = null;   // nur das Wort "Titel" irgendwo - alte Kopfzeile ohne Zuordnung
+  }
+  if (!kopf) kopf = ['titel','autor','von','bis','themen','exemplare'];
+  var gesehen = {};
+  zeilen.forEach(function (zeile){
+    var p = zeile.split(trenner), w = {};
+    kopf.forEach(function (name, i){ if (name && w[name] === undefined) w[name] = (p[i]||'').trim(); });
+    if (!w.titel){ out.fehler.push({ zeile: zeile, grund:'Titel fehlt' }); return; }
+    var von = parseInt(w.von,10), bis = parseInt(w.bis,10);
+    if (w.alter && (isNaN(von) || isNaN(bis))){
+      var z = w.alter.match(/\d+/g) || [];
+      if (isNaN(von) && z[0]) von = +z[0];
+      if (isNaN(bis) && z[1]) bis = +z[1];
+    }
+    var roh = (w.themen||'').split(/[,\/|]/).map(function (t){ return t.trim(); }).filter(Boolean);
+    var themen = [], unbekannt = [];
+    roh.forEach(function (t){
+      var k = kategorien().filter(function (c){ return c.toLowerCase() === t.toLowerCase(); })[0];
+      if (k){ if (themen.indexOf(k) < 0) themen.push(k); } else unbekannt.push(t);
+    });
+    var ber = tabBereich(w.bereich);
+    var isbn = Buchdaten.normIsbn(w.isbn);
+    var vorhanden = isbn ? S.titles.filter(function (t){ return Buchdaten.normIsbn(t.isbn) === isbn; })[0] : null;
+    out.neu.push({ titel:w.titel, untertitel:w.untertitel||'', autor:w.autor||'Unbekannt', illustrator:w.illustrator||'',
+      verlag:w.verlag||'', jahr:parseInt(w.jahr,10)||null, isbn:isbn ? Buchdaten.formatIsbn(isbn) : '',
+      von:isNaN(von)?3:von, bis:isNaN(bis)?6:bis, themen:themen, unbekannteThemen:unbekannt,
+      bereichId: ber ? ber.id : null, unbekannterBereich: ber === false ? w.bereich : '',
+      exemplare:Math.max(1, parseInt(w.exemplare,10)||1), blurb:w.blurb||'', sprache:w.sprache||'Deutsch',
+      vorhandenId: vorhanden ? vorhanden.id : null, doppeltInListe: !vorhanden && !!isbn && !!gesehen[isbn] });
+    if (isbn) gesehen[isbn] = true;
   });
   return out;
 }
+/* Eine Zeile ohne eigenen Bereich (oder mit unbekanntem) kommt in den Bereich des Durchgangs. */
+function tabZielBereich(n){ return n.bereichId !== null ? n.bereichId : (bestand.bereichId || ''); }
 function tabelleUebernehmen(){
-  var titelZahl = 0, exemplare = 0;
+  var titelZahl = 0, exemplare = 0, ergaenzt = 0, ausListe = {};
   bestand.tabErgebnis.neu.forEach(function (n){
-    var idx = S.titles.length + 1, id = uid('t'), ber = bestand.bereichId || '';
-    var neuerTitel = { id:id, title:n.titel, subtitle:'', author:n.autor, illustrator:'', publisher:'',
-      year:new Date().getFullYear(), ageMin:n.von, ageMax:n.bis, cats:n.themen.slice(), blurb:'',
-      isbn:'', lang:'Deutsch', coverIdx:(idx-1) % COVER_PALETTE.length, cover:null,
+    var schon = n.vorhandenId || (n.isbn && ausListe[n.isbn]);
+    if (schon && title(schon)){
+      n.vorhandenId = schon;
+      for (var j = 0; j < n.exemplare; j++){ addCopyTo(n.vorhandenId); exemplare++; }
+      ergaenzt++;
+      return;
+    }
+    var idx = S.titles.length + 1, id = uid('t'), ber = tabZielBereich(n);
+    var neuerTitel = { id:id, title:n.titel, subtitle:n.untertitel, author:n.autor, illustrator:n.illustrator,
+      publisher:n.verlag, year:n.jahr || new Date().getFullYear(), ageMin:n.von, ageMax:n.bis,
+      cats:n.themen.slice(), blurb:n.blurb, isbn:n.isbn, lang:n.sprache,
+      coverIdx:(idx-1) % COVER_PALETTE.length, cover:null,
       bereichId:ber, nr:naechsteNummer(ber) };
     S.titles.push(neuerTitel);
+    if (n.isbn) ausListe[n.isbn] = id;
     for (var k = 0; k < n.exemplare; k++){
       S.copies.push({ id:uid('c'), titleId:id, inv:invNummer(neuerTitel, k+1),
         status:'available', token:newToken('B'), etikettAm:null });
@@ -5079,11 +5166,11 @@ function tabelleUebernehmen(){
     }
     titelZahl++;
   });
-  logAction('Tabelle übernommen: '+titelZahl+' Titel, '+exemplare+' Exemplare');
+  logAction('Tabelle übernommen: '+titelZahl+' neue Titel, '+ergaenzt+' ergänzt, '+exemplare+' Exemplare');
   save();
   bestand.tabErgebnis = null; bestand.tabText = '';
   render();
-  toast(titelZahl+' Titel mit '+exemplare+' Exemplaren angelegt.');
+  toast(titelZahl+' Titel angelegt'+(ergaenzt ? ', '+ergaenzt+' ergänzt' : '')+' · '+exemplare+' Exemplare. Etiketten nicht vergessen.');
 }
 
 /* --------------------------------------------------------- Leer anfangen
