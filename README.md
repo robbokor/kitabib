@@ -43,13 +43,23 @@ Jahreswechsel, MVP).
 
 ## Aktualisieren
 
-Die Arbeitsdatei ist `KitaBib_Prototyp.html` (nicht im Repository). Nach einer
-Änderung:
+**Die einzige Quelle ist `index.html` in diesem Repository** (Branch `main`).
+Daraus baut GitHub Pages die Anwendung. Es gibt keine zweite Arbeitsdatei.
+
+Wer lokal ändern will, holt sich vorher immer den aktuellen Stand und arbeitet
+direkt in `index.html`:
 
 ```bash
-cp KitaBib_Prototyp.html index.html
+git pull
+# index.html bearbeiten
 git commit -am "Beschreibung der Änderung"
 git push
 ```
 
 GitHub Pages baut die Seite danach in etwa einer Minute neu.
+
+Früher gab es eine lokale Arbeitsdatei `KitaBib_Prototyp.html`, die über
+`index.html` kopiert wurde. Diesen Weg nicht mehr benutzen: Eine alte Kopie
+überschreibt beim Kopieren alle Änderungen, die inzwischen in `index.html`
+stehen. Der Name bleibt in `.gitignore`, damit eine liegengebliebene Kopie
+nicht versehentlich hochgeladen wird.
